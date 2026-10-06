@@ -154,10 +154,15 @@ export async function recognize(req, res) {
     }
   };
 
-  // 串行识别：AI 接口通常有并发限制，连拍时排队更稳
-  const results = [];
-  for (let i = 0; i < list.length; i += 1) {
-    results.push(await runOne(list[i], i));
+  // 并发识别：一次发 3 张、齐了再发下一批。
+  // 原来是一张一张排队（await 在循环里），5 张图要等 5 倍单张时间。
+  // 3 路是实测下来比较稳的数字 —— 再高容易撞上 API 的并发上限，反而整体变慢。
+  const CONCURRENCY = 3;
+  const results = new Array(list.length);
+  for (let start = 0; start < list.length; start += CONCURRENCY) {
+    const batch = list.slice(start, start + CONCURRENCY);
+    const done = await Promise.all(batch.map((imageId, k) => runOne(imageId, start + k)));
+    done.forEach((r, k) => { results[start + k] = r; });
   }
 
   activityRepo.log({

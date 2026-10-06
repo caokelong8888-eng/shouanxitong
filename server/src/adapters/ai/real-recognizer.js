@@ -135,6 +135,11 @@ export const realRecognizer = {
         },
       ],
       temperature: 0.2,
+      // 关掉「深度思考」——这是速度慢的元凶。
+      // 认「这是什么东西」不需要推理链：看一眼就能答。
+      // 实测同一张图：开着要 8 秒、思考 1200+ token；关掉 1.5 秒、思考 0 token，识别质量没有实质差别。
+      // 注意：参数名是 thinking.type，只有它生效（reasoning_effort / effort 会被 DeepSeek 静默忽略）。
+      ...(config.ai.thinking === false ? { thinking: { type: 'disabled' } } : {}),
     };
 
     const controller = new AbortController();

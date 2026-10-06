@@ -77,6 +77,12 @@ export const config = {
     model: process.env.AI_MODEL || '',
     /** 单张识别超时（毫秒） */
     timeout: Number(process.env.AI_TIMEOUT || 30000),
+    /**
+     * 是否开启模型自带的「深度思考」。
+     * 默认关闭 —— 认物品是看一眼的活，不需要推理链。
+     * 设成AI_THINKING=true 可以打开（更准，但单张从 1.5 秒变8 秒）。
+     */
+    thinking: process.env.AI_THINKING === 'true',
   },
 
   /** 前端扫码二维码指向的地址前缀，部署时改成真实域名 */
