@@ -84,15 +84,18 @@ export async function inboundPage({ app, query }) {
           <div id="result-list"></div>
         </div>
 
-        <!-- 选盒子 + 提交 -->
+        <!-- 选盒子（可选） -->
         <div class="section hidden" id="submit-section">
           <div class="card card-pad">
             <div class="flex between">
               <div class="grow">
-                <div class="xs muted">放进哪个盒子</div>
-                <div id="chosen-box" style="font-weight:600;margin-top:2px;">还没选</div>
+                <div class="xs muted">放进哪个盒子（可以不选）</div>
+                <div id="chosen-box" style="font-weight:600;margin-top:2px;">暂不指定位置</div>
               </div>
               <button class="btn btn-ghost" id="btn-pick-box">选择</button>
+            </div>
+            <div class="xs muted mt-2">
+              有些东西只是先记下来、不一定马上归位，不选盒子也能直接提交，之后想放再放。
             </div>
           </div>
         </div>
@@ -658,8 +661,14 @@ function updateSubmitState() {
   const hasItems = state.photos.some((p) => p.status === 'recognized' && p.result);
   toggleSubmitBar(hasItems);
   const btn = document.getElementById('btn-submit');
+  // 不选盒子也能提交 —— 认出来的东西先记下来是第一位，
+  // 有些只是「家里有这个」，暂时归不到哪个盒子，硬拦着反而没人愿意记。
   // 正在提交时不要把按钮重新放开
-  if (btn && !state.busy) btn.disabled = !hasItems || !state.containerId;
+  if (btn && !state.busy) btn.disabled = !hasItems;
+  // 按钮文案跟着变，让人一眼看出这批东西会去哪
+  if (btn && !state.busy) {
+    btn.textContent = state.containerId ? '全部放进去' : '记下来，不放盒子';
+  }
 }
 
 /* ---------------- 选盒子 & 入库 ---------------- */
@@ -718,14 +727,20 @@ async function submitAll() {
     .filter((x) => x.name);
 
   if (!items.length) return toast('还有东西没填名称', true);
-  if (!state.containerId) return toast('先选一个盒子', true);
+
+  // 不选盒子也能提交：containerId 传 null，服务端会记成「暂未放入盒子」
+  const boxId = state.containerId || null;
 
   btn.disabled = true;
-  btn.textContent = '正在放进去…';
+  btn.textContent = boxId ? '正在放进去…' : '正在记下来…';
 
   try {
-    const { data } = await api.batchInbound({ containerId: state.containerId, items });
-    toast(`放进去了 ${data.createdCount} 件东西`);
+    const { data } = await api.batchInbound({ containerId: boxId, items });
+    toast(
+      boxId
+        ? `放进去了 ${data.createdCount} 件东西`
+        : `记下了 ${data.createdCount} 件东西（暂未放入盒子）`
+    );
     if (data.failed?.length) {
       console.warn('部分失败', data.failed);
       toast(`有 ${data.failed.length} 件没存上`, true);
@@ -735,8 +750,9 @@ async function submitAll() {
       if (p.localUrl) URL.revokeObjectURL(p.localUrl);
     });
     clearPendingMark();
-    // 直接跳到盒子详情，让用户看到结果
-    navigate(`/boxes/${data.containerId}`);
+    // 选了盒子就跳盒子详情看结果；没选盒子回搜索页（那儿能按图片找回来）
+    if (boxId) navigate(`/boxes/${boxId}`);
+    else navigate('/search');
   } catch (err) {
     toast(err.message, true);
     btn.disabled = false;

@@ -259,11 +259,16 @@ export async function batchInbound(req, res) {
   const userId = req.userId;
 
   const containerIdRaw = req.body?.containerId;
-  if (containerIdRaw === undefined || containerIdRaw === null || containerIdRaw === '') {
-    throw badRequest('请选择要放入的盒子');
+  // 不选盒子也允许入库。
+  // 有些东西只是「记一下家里有」，暂时不打算归到哪个盒子 ——
+  // 硬拦着只会让人嫌麻烦干脆不记了。stock.container_id 允许为空，
+  // stock.repo 的 upsert / findStock 也都显式处理过 null，链路是通的。
+  // 填了盒子就照旧校验盒子合法性（填错了要报错，不能静默忽略）。
+  let container = null;
+  if (containerIdRaw !== undefined && containerIdRaw !== null && containerIdRaw !== '' && containerIdRaw !== 0) {
+    container = containerRepo.getContainer(Number(containerIdRaw), familyId);
+    if (!container) throw badRequest('盒子不存在');
   }
-  const container = containerRepo.getContainer(Number(containerIdRaw), familyId);
-  if (!container) throw badRequest('盒子不存在');
 
   const rows = Array.isArray(req.body?.items) ? req.body.items : [];
   if (!rows.length) throw badRequest('没有要入库的物品');
@@ -290,7 +295,7 @@ export async function batchInbound(req, res) {
         aiConfidence: row.confidence ?? null,
         needConfirm: row.needConfirm ?? false,
         userId,
-        containerId: container.id,
+        containerId: container?.id ?? null,
         quantity: row.quantity,
         note: row.note ?? null,
         tags: row.tags,
@@ -308,16 +313,20 @@ export async function batchInbound(req, res) {
     familyId,
     userId,
     action: 'inbound',
-    entityType: 'container',
-    entityId: container.id,
-    summary: `一次性把 ${created.length} 件物品放进了${container.name}`,
+    // 没选盒子时，日志挂在物品上而不是某个盒子
+    entityType: container ? 'container' : 'item',
+    entityId: container ? container.id : created[0]?.itemId ?? null,
+    summary: container
+      ? `一次性把 ${created.length} 件物品放进了${container.name}`
+      : `记录了 ${created.length} 件物品（暂未放入盒子）`,
     detail: { created: created.map((c) => c.name), failed: failed.length },
   });
 
   return ok(res, {
-    containerId: container.id,
-    containerName: container.name,
-    fullPath: container.full_path,
+    // 没选盒子时这几个字段为 null，前端据此决定跳不跳转
+    containerId: container?.id ?? null,
+    containerName: container?.name ?? null,
+    fullPath: container?.full_path ?? null,
     createdCount: created.length,
     created,
     failed,
