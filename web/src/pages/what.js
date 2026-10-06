@@ -1,4 +1,5 @@
 import { api } from '../services/api.js';
+import { compressImage } from '../services/image-compress.js';
 import { esc, thumbHtml, toast, pickSheet, bindZoom, zoomAttr } from '../components/ui.js';
 import { navigate } from '../router.js';
 import { renderBottomNav } from '../components/bottom-nav.js';
@@ -40,15 +41,17 @@ export async function whatPage({ app }) {
 let lastResult = null;
 
 async function onPick(e) {
-  const file = e.target.files?.[0];
+  const picked = e.target.files?.[0];
   e.target.value = '';
-  if (!file) return;
+  if (!picked) return;
 
   const resultBox = document.getElementById('result');
   resultBox.classList.remove('hidden');
   resultBox.innerHTML = '<div class="loading"><span class="spinner"></span>正在看这张图…</div>';
 
   try {
+    // 手机原图 3~5MB，这条线路传不动，先压再传（AI 只需要看清东西长什么样）
+    const file = await compressImage(picked);
     const up = await api.uploadImage(file);
     const imageId = up.data.id;
 

@@ -19,6 +19,7 @@
  */
 
 import { openCameraSheet, canUseBuiltinCamera } from './camera-sheet.js';
+import { compressImage } from './image-compress.js';
 
 /**
  * 照片暂存区。
@@ -129,12 +130,15 @@ export async function openCamera({ onDone } = {}) {
 export function openSystemCamera({ onDone } = {}) {
   const input = ensureInput();
 
-  const finish = (files) => {
+  // 系统相机给的是手机原图，3~5MB 一张。这条线路国内上传只有 3~6 KB/s，
+  // 不压的话一张要传十几分钟 —— 拍完立刻压，压完再往上送。
+  const finish = async (files) => {
     input.removeEventListener('change', onChange);
     if (files?.length) {
-      pendingFiles = files;
-      markPending(files.length);
-      onDone?.(files);
+      const squeezed = await Promise.all(files.map((f) => compressImage(f)));
+      pendingFiles = squeezed;
+      markPending(squeezed.length);
+      onDone?.(squeezed);
     } else {
       onDone?.([]);
     }

@@ -15,6 +15,7 @@ import {
 import { navigate } from '../router.js';
 import { renderBottomNav } from '../components/bottom-nav.js';
 import { openCamera } from '../services/camera.js';
+import { compressImage } from '../services/image-compress.js';
 
 /**
  * 盒子详情 —— 查看「这个盒子里面有什么」。
@@ -243,10 +244,12 @@ export async function boxDetailPage({ app, params }) {
     input.accept = 'image/*';
     input.capture = 'environment';
     input.addEventListener('change', async () => {
-      const file = input.files?.[0];
-      if (!file) return;
+      const picked = input.files?.[0];
+      if (!picked) return;
       toast('正在上传…');
       try {
+        // 同上：手机原图传不动，先压
+        const file = await compressImage(picked);
         await api.uploadImage(file, { containerId: box.id });
         toast('盒子照片已保存');
         await load();

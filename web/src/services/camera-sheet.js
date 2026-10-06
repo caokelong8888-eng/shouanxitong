@@ -21,8 +21,17 @@ import { esc, toast } from '../components/ui.js';
  *   { fallback: true }     用户点了「用系统拍照」→ 调用方退回 input capture
  */
 
-/** 拍下来的照片最长边压到 1600，够看清又不会把上传撑爆 */
-const MAX_CAPTURE_EDGE = 1600;
+/**
+ * 拍下来的照片最长边压到多少。
+ * 与image-compress.js 的 MAX_EDGE 保持一致 —— 相机这条路是「拍的时候就裁」，
+ * 不用等拍完再解一次码，在低内存的手机上更稳。
+ * 为什么压这么小：服务器在新加坡，国内上行只有 3~6 KB/s（实测），
+ * 而 AI 识别看的就是缩略图，1280px 足够认。
+ */
+const MAX_CAPTURE_EDGE = 1280;
+
+/** JPEG 质量，与 image-compress.js 一致 */
+const CAPTURE_QUALITY = 0.75;
 
 /** 页面内相机可用吗 —— 非安全上下文（http）拿不到媒体设备 */
 export function canUseBuiltinCamera() {
@@ -254,7 +263,7 @@ export function openCameraSheet() {
           navigator.vibrate?.(20);
         },
         'image/jpeg',
-        0.88
+        CAPTURE_QUALITY
       );
     }
 
