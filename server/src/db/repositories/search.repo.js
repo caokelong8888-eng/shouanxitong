@@ -176,11 +176,11 @@ export function searchItemsByPlace(familyId, placeFilter, limit = 50) {
 export function listPlaceNames(familyId) {
   const db = getDb();
   const spaces = db
-    .prepare('SELECT id, name FROM spaces WHERE family_id = ? AND name <> ""')
+    .prepare(`SELECT id, name FROM spaces WHERE family_id = ? AND name <> '' AND TRIM(name) <> ''`)
     .all(familyId)
     .map((s) => ({ type: 'space', id: s.id, name: s.name }));
   const locations = db
-    .prepare('SELECT id, name FROM locations WHERE family_id = ? AND name <> ""')
+    .prepare(`SELECT id, name FROM locations WHERE family_id = ? AND name <> '' AND TRIM(name) <> ''`)
     .all(familyId)
     .map((l) => ({ type: 'location', id: l.id, name: l.name }));
   // 长的排前面：「柜子A」要先于「柜子」被匹配掉，否则会先吃掉「柜子」留下「A」

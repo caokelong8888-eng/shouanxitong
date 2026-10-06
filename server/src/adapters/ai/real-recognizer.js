@@ -25,11 +25,13 @@ color（颜色）
 quantity（数量，判断不出填 1）
 unit（单位：个/条/节/套/瓶...）
 description（一句话描述这是什么、干什么用）
+usage（2-3 句人话说明：这东西日常怎么用、什么时候会想起它。不要写「用于...」这种说明书口气）
+related（3-6 个「可能和它放在一起」的物品名，用于提示收纳位置，例如 ["充电线","手机","备用电池"]）
 confidence（0 到 1 的置信度，不确定就低分）
 needConfirm（布尔值，true 表示需要人工确认）
 
 示例输出：
-{"name":"USB-C 转 HDMI 转接器","category":"电子配件","tags":["USB-C","HDMI","转接器","显示器配件"],"brand":null,"model":null,"color":"银灰","quantity":1,"unit":"个","description":"把 USB-C 接口的信号转成 HDMI 输出","confidence":0.91,"needConfirm":false}`;
+{"name":"USB-C 转 HDMI 转接器","category":"电子配件","tags":["USB-C","HDMI","转接器","显示器配件"],"brand":null,"model":null,"color":"银灰","quantity":1,"unit":"个","description":"把 USB-C 接口的信号转成 HDMI 输出","usage":"出差或上课时，笔记本只有 USB-C 口但投影仪是 HDMI 口，中间靠它接一下就能投屏。不用的时候塞进电脑包侧袋就行。","related":["USB-C 数据线","笔记本电脑","HDMI 线"],"confidence":0.91,"needConfirm":false}`;
 
 function assertConfigured() {
   if (!config.ai.endpoint || !config.ai.apiKey) {

@@ -133,6 +133,10 @@ export async function recognize(req, res) {
           quantity: raw.quantity,
           unit: raw.unit,
           description: raw.description,
+          // 这两个字段 AI 一直在返回，但这里以前没往下传 ——
+          // 结果入库卡片上「怎么用」「可能和什么放一起」永远是空的。
+          usage: raw.usage || '',
+          related: Array.isArray(raw.related) ? raw.related : [],
           confidence: raw.confidence,
           needConfirm: raw.needConfirm,
         },
