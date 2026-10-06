@@ -1,0 +1,20 @@
+{
+  "name": "家庭收纳",
+  "short_name": "家庭收纳",
+  "description": "记录家里的东西是什么、放在哪里",
+  "start_url": "/#/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F6F7F9",
+  "theme_color": "#0E9F9F",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "home-storage-system",
+  "private": true,
+  "version": "0.1.0",
+  "description": "家庭智能收纳管理系统 - 记录家里的东西是什么，放在哪里",
+  "type": "module",
+  "scripts": {
+    "migrate": "node server/src/db/migrate.js",
+    "seed": "node server/scripts/seed.js",
+    "dev": "pnpm --filter server dev",
+    "dev:web": "pnpm --filter web dev",
+    "build:web": "pnpm --filter web build",
+    "serve": "node server/src/index.js",
+    "smoke": "node server/scripts/smoke-test.js"
+  },
+  "packageManager": "pnpm@10.28.2"
+}

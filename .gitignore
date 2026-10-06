@@ -1,0 +1,17 @@
+node_modules/
+dist/
+data/
+storage/
+*.log
+.DS_Store
+.env
+.env.local
+
+# 备份副本：里面含明文访问口令和数据库，绝不能进版本库
+.env.bak*
+*.bak.*
+*.bak
+server.bak*/
+web.bak*/
+*.tgz
+*.db

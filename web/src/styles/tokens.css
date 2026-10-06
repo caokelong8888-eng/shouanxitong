@@ -1,0 +1,78 @@
+/* ============================================================
+   设计变量
+   ------------------------------------------------------------
+   基调：大圆角、大面积留白、图片优先。
+   目标感觉是「家庭工具 App」，不是企业库存后台。
+   所有颜色/圆角/间距都从这里取，页面里不写死数值。
+   ============================================================ */
+
+:root {
+  /* ---- 主色：蒂芙尼青 → 淡天蓝，柔和、有质感 ---- */
+  --c-primary: #0e9f9f;
+  --c-primary-dark: #0b7f7f;
+  --c-primary-light: #e6f6f6;
+  --c-accent: #4fb8dd;
+  --c-accent-light: #eaf6fb;
+
+  /* ---- 中性色 ---- */
+  --c-bg: #f6f7f9;
+  --c-surface: #ffffff;
+  --c-surface-soft: #fbfcfd;
+  --c-border: #eceff3;
+  --c-border-strong: #dde3ea;
+
+  --c-text: #1f2937;
+  --c-text-sub: #6b7280;
+  --c-text-muted: #9ca3af;
+  --c-text-invert: #ffffff;
+
+  /* ---- 语义色 ---- */
+  --c-success: #10b981;
+  --c-warn: #f59e0b;
+  --c-danger: #ef4444;
+  --c-warn-bg: #fef6e7;
+  --c-danger-bg: #fdeceb;
+  --c-success-bg: #e8f7f1;
+
+  /* ---- 圆角：大圆角是这套 UI 的识别特征 ---- */
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  --r-full: 999px;
+
+  /* ---- 间距：留白要够，不要挤 ---- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+
+  /* ---- 字号 ---- */
+  --f-xs: 12px;
+  --f-sm: 13px;
+  --f-md: 15px;
+  --f-lg: 17px;
+  --f-xl: 20px;
+  --f-2xl: 24px;
+  --f-3xl: 30px;
+
+  /* ---- 阴影：轻，只用来分层，不制造厚重感 ---- */
+  --sh-sm: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --sh-md: 0 2px 8px rgba(16, 24, 40, 0.06);
+  --sh-lg: 0 8px 24px rgba(16, 24, 40, 0.08);
+  --sh-primary: 0 6px 18px rgba(14, 159, 159, 0.28);
+
+  /* ---- 布局 ---- */
+  --h-nav: 60px;
+  --h-header: 52px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --page-max: 560px;
+
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+}

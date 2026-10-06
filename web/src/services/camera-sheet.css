@@ -1,0 +1,297 @@
+/* ============================================================
+ * 内置相机面板样式
+ * ------------------------------------------------------------
+ * 全屏黑色取景页：中间一个方形取景框，四周压暗（用 9999px 的
+ * box-shadow 实现遮罩，比四块 div 简单也不会有接缝）。
+ * 底部一排：相册 / 快门 / 完成。
+ * ============================================================ */
+
+.cam-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn .16s var(--ease);
+  overscroll-behavior: contain;
+}
+
+/* 拍照瞬间的白色闪光 */
+.cam-sheet.flash .cam-stage:after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: .75;
+  pointer-events: none;
+  animation: camFlash .16s ease-out;
+}
+
+@keyframes camFlash {
+  0% { opacity: .75; }
+  to { opacity: 0; }
+}
+
+.cam-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cam-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cam-mask {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cam-frame {
+  width: 82%;
+  max-width: 520px;
+  aspect-ratio: 1;
+  border: 2px solid rgba(255, 255, 255, .9);
+  border-radius: var(--r-lg);
+  /* 靠超大 box-shadow 压暗框外区域，形成「只认框中物」的引导 */
+  box-shadow: 0 0 0 9999px #00000057;
+  position: relative;
+}
+
+/* 左上 / 右下两个角标，给取景框一点精致感 */
+.cam-frame:before,
+.cam-frame:after {
+  content: "";
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--c-primary);
+}
+
+.cam-frame:before {
+  top: -2px;
+  left: -2px;
+  border-right: none;
+  border-bottom: none;
+  border-top-left-radius: var(--r-lg);
+}
+
+.cam-frame:after {
+  bottom: -2px;
+  right: -2px;
+  border-left: none;
+  border-top: none;
+  border-bottom-right-radius: var(--r-lg);
+}
+
+.cam-hint {
+  position: absolute;
+  left: var(--s-5);
+  right: var(--s-5);
+  top: calc(var(--safe-top) + 76px);
+  text-align: center;
+  color: #ffffffe0;
+  font-size: var(--f-sm);
+  line-height: 1.65;
+  letter-spacing: .02em;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .6);
+  pointer-events: none;
+}
+
+/* ---------- 出错时的提示区（复用 hint 的位置） ---------- */
+
+.cam-err {
+  font-size: var(--f-lg);
+  font-weight: 600;
+  color: #fff;
+}
+
+.cam-err-detail {
+  margin-top: 8px;
+  font-size: var(--f-sm);
+  color: #ffffffc7;
+  line-height: 1.7;
+}
+
+.cam-err-acts {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.cam-fallback {
+  display: inline-block;
+  padding: 10px 22px;
+  border-radius: var(--r-full);
+  background: #ffffff29;
+  border: 1px solid rgba(255, 255, 255, .3);
+  color: #fff;
+  font-size: var(--f-sm);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.cam-fallback:active {
+  background: #ffffff4d;
+}
+
+/* ---------- 已拍缩略图 ---------- */
+
+.cam-thumbs {
+  display: flex;
+  gap: 8px;
+  padding: 10px var(--s-4) 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.cam-thumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.cam-thumbs.is-empty {
+  display: none;
+}
+
+.cam-thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 54px;
+  height: 54px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  border: 1.5px solid rgba(255, 255, 255, .45);
+}
+
+.cam-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cam-thumb-x {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-full);
+  background: #0009;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- 底部操作栏 ---------- */
+
+.cam-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 26px calc(18px + var(--safe-bottom));
+  background: #000;
+}
+
+.cam-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 64px;
+  color: #ffffffd1;
+}
+
+.cam-side span {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.cam-side em {
+  font-style: normal;
+  font-size: 11px;
+}
+
+.cam-side:active {
+  opacity: .6;
+}
+
+.cam-shutter {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--r-full);
+  background: #fff;
+  border: 4px solid rgba(255, 255, 255, .35);
+  background-clip: padding-box;
+  box-shadow: 0 0 0 2px #fff;
+  transition: transform .1s var(--ease);
+}
+
+.cam-shutter:active {
+  transform: scale(.9);
+}
+
+.cam-shutter:disabled {
+  opacity: .35;
+}
+
+.cam-close {
+  position: absolute;
+  top: calc(var(--safe-top) + 12px);
+  right: 14px;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-full);
+  background: #ffffff26;
+  color: #fff;
+  font-size: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(6px);
+}
+
+.cam-close:active {
+  background: #ffffff47;
+}
+
+/* ---------- 横屏矮屏幕：取景框改成按高度撑满，别把操作栏挤没 ---------- */
+
+@media (orientation: landscape) and (max-height: 480px) {
+  .cam-frame {
+    width: auto;
+    height: 68%;
+  }
+
+  .cam-bar {
+    padding: 8px 26px calc(10px + var(--safe-bottom));
+  }
+
+  .cam-shutter {
+    width: 58px;
+    height: 58px;
+  }
+
+  .cam-hint {
+    display: none;
+  }
+}
