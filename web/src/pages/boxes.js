@@ -89,7 +89,7 @@ export async function boxesPage({ app }) {
       <div class="section-head">
         <span class="section-title">共 ${list.length} 个盒子</span>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--s-3);">
+      <div class="box-grid">
         ${list.map(boxCard).join('')}
       </div>`;
 
@@ -104,24 +104,30 @@ export async function boxesPage({ app }) {
 function boxCard(c) {
   const count = c.item_kind_count || 0;
   const total = c.item_total_qty || 0;
+  // 三列下位置文字只剩两三行，全路径太长会被压成省略号看不出在哪。
+  // 只留最后两段（「书房 / 柜子A」这种），第一段「客厅」去掉了反而更好认 —— 想看全的进详情页。
+  const tailPath = String(c.full_path || '')
+    .split('/')
+    .filter(Boolean)
+    .slice(-2)
+    .join(' / ');
   return `
-    <button data-box="${c.id}" style="text-align:left;background:var(--c-surface);border-radius:var(--r-lg);box-shadow:var(--sh-sm);overflow:hidden;padding:0;">
+    <button data-box="${c.id}" class="box-card">
       ${
         c.cover_thumb_url
-          ? `<img src="${esc(c.cover_thumb_url)}"${zoomAttr(c.cover_thumb_url)} alt="${esc(c.name)}" loading="lazy"
-               style="width:100%;aspect-ratio:4/3;object-fit:cover;background:var(--c-border);cursor:zoom-in;" />`
-          : `<div style="width:100%;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;background:var(--c-surface-soft);border-bottom:1px dashed var(--c-border-strong);font-size:30px;">📦</div>`
+          ? `<img src="${esc(c.cover_thumb_url)}"${zoomAttr(c.cover_thumb_url)} alt="${esc(c.name)}" loading="lazy" />`
+          : '<div class="box-card-noimg">📦</div>'
       }
-      <div style="padding:10px 12px 12px;">
-        <div class="flex gap-2" style="align-items:baseline;">
-          <span style="font-weight:600;">${esc(c.name)}</span>
-          <span class="xs muted">${esc(c.code)}</span>
+      <div class="box-card-body">
+        <div class="box-card-top">
+          <span class="box-card-name">${esc(c.name)}</span>
+          <span class="box-card-code">${esc(c.code)}</span>
         </div>
-        <div class="xs muted mt-1 ellipsis">${esc(c.full_path || '还没设置位置')}</div>
+        <div class="box-card-path">${esc(tailPath || '还没设置位置')}</div>
         ${
           count
-            ? `<div class="xs mt-1" style="color:var(--c-primary);font-weight:600;">${count} 种 · ${total} 件</div>`
-            : '<div class="xs muted mt-1">空盒子</div>'
+            ? `<div class="box-card-count">${count} 种 · ${total} 件</div>`
+            : '<div class="box-card-count is-empty">空盒子</div>'
         }
       </div>
     </button>`;

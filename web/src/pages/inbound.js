@@ -95,8 +95,16 @@ export async function inboundPage({ app, query }) {
               <button class="btn btn-ghost" id="btn-pick-box">选择</button>
             </div>
           </div>
-          <button class="btn btn-primary btn-lg btn-block mt-4" id="btn-submit" disabled>全部放进去</button>
         </div>
+      </div>
+
+      <!--
+        提交条吸在底部。
+        原来按钮跟着内容往下走，AI 认完一屏就够不着了 —— 得滚动去找「全部放进去」，
+        拍照入库最关键的一步反而最难点。固定在底部导航之上，随时能按。
+      -->
+      <div class="submit-bar hidden" id="submit-bar">
+        <button class="btn btn-primary btn-lg btn-block" id="btn-submit" disabled>全部放进去</button>
       </div>
     </div>
   `;
@@ -136,7 +144,7 @@ export async function inboundPage({ app, query }) {
     if (prog) prog.textContent = '';
     renderPhotos();
     document.getElementById('result-section').classList.add('hidden');
-    document.getElementById('submit-section').classList.add('hidden');
+    toggleSubmitBar(false);
     document.getElementById('empty-card').classList.remove('hidden');
   });
 
@@ -534,7 +542,10 @@ function resultCard(p) {
                    style="padding:7px 10px;font-size:var(--f-sm);border-radius:var(--r-sm);width:64px;flex-shrink:0;" />
           </div>
           <div class="chip-row mt-2">
-            ${(r.tags || []).map((t) => `<span class="chip chip-grey xs">${esc(t)}</span>`).join('')}
+            ${(r.tags || [])
+              .slice(0, 6) // AI 常给 7~8 个标签，全铺出来能占三行，反而把「放进去」按钮挤出屏幕。留 6 个够用。
+              .map((t) => `<span class="chip chip-grey xs">${esc(t)}</span>`)
+              .join('')}
             ${r.needConfirm ? '<span class="chip chip-warn xs">AI 也不太确定</span>' : ''}
             ${
               r.confidence !== undefined && r.confidence !== null
@@ -623,20 +634,30 @@ function dropPhoto(id) {
   renderPhotos();
 
   if (!count) {
-    // 全删完了 → 回到空状态
+    // 全删完了→ 回到空状态
     document.getElementById('result-section').classList.add('hidden');
-    document.getElementById('submit-section').classList.add('hidden');
+    toggleSubmitBar(false);
     document.getElementById('empty-card').classList.remove('hidden');
     return;
   }
   renderResults();
 }
 
+/**
+ * 选盒子区与吸底提交条一起显隐。
+ * 分开两处控制容易漏（之前就只关了 section 忘了 bar），所以收在一个函数里。
+ */
+function toggleSubmitBar(show) {
+  document.getElementById('submit-section')?.classList.toggle('hidden', !show);
+  document.getElementById('submit-bar')?.classList.toggle('hidden', !show);
+  // 同时给页面加类，留出底部空间，避免最后一张卡片被吸底条压住
+  document.querySelector('.page')?.classList.toggle('has-submit-bar', show);
+}
+
 function updateSubmitState() {
-  const section = document.getElementById('submit-section');
-  const btn = document.getElementById('btn-submit');
   const hasItems = state.photos.some((p) => p.status === 'recognized' && p.result);
-  section.classList.toggle('hidden', !hasItems);
+  toggleSubmitBar(hasItems);
+  const btn = document.getElementById('btn-submit');
   // 正在提交时不要把按钮重新放开
   if (btn && !state.busy) btn.disabled = !hasItems || !state.containerId;
 }

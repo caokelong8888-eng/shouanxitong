@@ -774,6 +774,128 @@ a {
   background: var(--c-border);
 }
 
+/* ---------- 盒子墙（盒子页）---------- */
+/* 一行三个。原来是两个，390px 屏上每张占了近一半，
+   一屏只能看四个盒子，找东西效率很低。 */
+.box-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-2);
+}
+
+.box-card {
+  text-align: left;
+  background: var(--c-surface);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-sm);
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.box-card img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: var(--c-border);
+  cursor: zoom-in;
+}
+
+.box-card-noimg {
+  width: 100%;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-surface-soft);
+  border-bottom: 1px dashed var(--c-border-strong);
+  font-size: 24px;
+}
+
+.box-card-body {
+  padding: 7px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0; /* 关键：允许子元素在窄格子里收缩，否则文字会撑破卡片 */
+}
+
+.box-card-top {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.box-card-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* 编号用等宽数字，三个卡片竖排时数字对齐，看着不乱 */
+.box-card-code {
+  font-size: 10px;
+  color: var(--c-text-sub);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.box-card-path {
+  font-size: 11px;
+  color: var(--c-text-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.box-card-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-primary);
+  white-space: nowrap;
+}
+
+.box-card-count.is-empty {
+  color: var(--c-text-sub);
+  font-weight: 400;
+}
+
+/* 屏幕很窄（如 SE 375px）时三列会更挤，字再降一档保证不溢出 */
+@media (max-width: 370px) {
+  .box-card-name { font-size: 12px; }
+  .box-card-path,
+  .box-card-count { font-size: 10px; }
+}
+
+/* ---------- 吸底提交条（入库页）---------- */
+/* 固定在底部导航之上。AI 认完一屏内容很长，按钮跟着内容走就找不着了。 */
+.submit-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* 导航栏高度 + 安全区 + 一点缝，正好压在导航栏上沿，不被圆钮盖住 */
+  bottom: calc(var(--h-nav) + var(--safe-bottom) + 10px);
+  z-index: 30; /* 高于导航栏的 20 */
+  padding: var(--s-2) var(--s-4) var(--s-3);
+  background: linear-gradient(to top, var(--c-bg) 62%, transparent);
+}
+
+/* 提交条出现时给页面加一段底部留白（由 JS 加 has-submit-bar 类），
+   否则最后一张结果卡片会压在条下面。不用 :has()，老浏览器不支持。 */
+.page.has-submit-bar {
+  padding-bottom: calc(var(--h-nav) + var(--safe-bottom) + 92px);
+}
+
+/* 屏幕矮（如 iPhone SE）时导航栏占得久，提交条上移一点免得遮住内容 */
+@media (max-height: 700px) {
+  .submit-bar { padding-top: var(--s-1); padding-bottom: var(--s-2); }
+}
+
 /* ---------- 图片墙（搜索页「所有东西」） ---------- */
 /* 一列 4 个、正方形、只有图。点一下进详情页看名字和位置。 */
 .item-grid {
