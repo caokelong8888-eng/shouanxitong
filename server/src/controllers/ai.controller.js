@@ -362,6 +362,13 @@ export async function batchInbound(req, res) {
     }
   }
 
+  // 实际落到库里的**物品条数**（同款合并后可能比提交项数少）。
+  // 用户看到的是「放进去几样东西」，不是「提交了几条」——
+  // 提交 8 根一样的线，实际是 1 样东西（数量 8）。
+  const distinctItemIds = new Set(created.map((c) => c.itemId));
+  const itemCount = distinctItemIds.size;
+  const totalQuantity = created.reduce((s, c) => s + (Number(c.quantity) || 0), 0);
+
   activityRepo.log({
     familyId,
     userId,
@@ -370,8 +377,8 @@ export async function batchInbound(req, res) {
     entityType: container ? 'container' : 'item',
     entityId: container ? container.id : created[0]?.itemId ?? null,
     summary: container
-      ? `一次性把 ${created.length} 件物品放进了${container.name}`
-      : `记录了 ${created.length} 件物品（暂未放入盒子）`,
+      ? `一次性把 ${itemCount} 件物品放进了${container.name}`
+      : `记录了 ${itemCount} 件物品（暂未放入盒子）`,
     detail: { created: created.map((c) => c.name), failed: failed.length },
   });
 
@@ -381,6 +388,10 @@ export async function batchInbound(req, res) {
     containerName: container?.name ?? null,
     fullPath: container?.full_path ?? null,
     createdCount: created.length,
+    // 实际入库的物品条数（同款合并后可能小于 createdCount）
+    itemCount,
+    // 物品总件数（数量字段加起来）
+    totalQuantity,
     created,
     failed,
   });

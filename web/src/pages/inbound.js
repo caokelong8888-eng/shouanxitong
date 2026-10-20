@@ -26,6 +26,13 @@ const state = {
   containerName: null,
   containerPath: null,
   busy: false,
+  // 组级编辑记录：组号 → { name?, category?, quantity?, unit? }
+  // 存在 state 里（不是临时的 group 对象里），这样重画列表时用户的修改不会丢。
+  groupEdits: new Map(),
+  // 分组键 → 稳定组号 的映射表。分组键来自 AI 原始名字，用户改名字不会改键，
+  // 所以组号也就不会变 —— 卡片不会因为改名而合并或分裂。
+  groupIds: new Map(),
+  groupSeq: 0,
 };
 
 export async function inboundPage({ app, query }) {
@@ -35,6 +42,9 @@ export async function inboundPage({ app, query }) {
   state.containerName = null;
   state.containerPath = null;
   state.busy = false;
+  state.groupEdits = new Map();
+  state.groupIds = new Map();
+  state.groupSeq = 0;
 
   // 【位置在拍之前就定了】
   // 从底部「＋」进来时，用户已经在「放进哪儿」面板里选好了盒子，
@@ -406,6 +416,9 @@ async function recognizePhotos(ids) {
         if (p) {
           p.status = 'recognized';
           p.result = r.result || r;
+          // 存下 AI 的原始名字 —— 分组键要用它，用户改名字不影响分组
+          p.aiName = p.result?.name || '';
+          p.aiQuantity = Number(p.result?.quantity) || 1;
         }
       } else if (p) {
         p.status = 'error';
@@ -492,8 +505,6 @@ function renderPhotos() {
  *   - 名字为空 → 各自成组（不合并没名字的东西）
  *   - 置信度低于 0.5 → 各自成组（认错了合在一起更麻烦）
  *
- * groupResults 和 bindResultEvents 都用这个函数，保证两边的分组口径完全一致。
- *
  * 【口径必须和后端一致】
  * 后端 item.repo.findItemByName 用同样的规则（去所有空白 + 转小写）去找同款。
  * 两边规则不一样的话，「USB-C 数据线」和「USB-C数据线」在前端是一组、
@@ -501,11 +512,53 @@ function renderPhotos() {
  */
 function groupKeyOf(p) {
   const r = p?.result;
-  const name = String(r?.name || '').trim();
+  // 【用 AI 的原始名字算分组键，不用用户改过的】
+  // 用户在卡片上把名字改了之后，如果分组键跟着变，
+  // A 组改成 B 组的名字就会和 B 组串成一组 —— 卡片凭空合并、数量跳变。
+  // aiName 是识别结果刚回来时存下的原始名字，用户的编辑不会碰它。
+  const raw = p?.aiName !== undefined ? p.aiName : r?.name;
+  const name = String(raw || '').trim();
   if (!name) return `__solo_${p.id}`;
   const confident = r?.confidence === undefined || r?.confidence === null || r.confidence >= 0.5;
   if (!confident) return `__solo_${p.id}`;
   return name.toLowerCase().replace(/\s+/g, '');
+}
+
+/**
+ * 分组的**稳定身份**。
+ *
+ * 【为什么不能拿名字当身份】
+ * 之前分组键就是归一化后的名字，于是：
+ *   - 用户把 A 组改名成 B 组的名字 → 两组自动串成一组，
+ *     卡片凭空合并、数量跳变，用户完全没察觉
+ *   - 「丢弃这一组」按名字反查成员，改名后按旧名字就找不到人了
+ *
+ * 现在改成：分组键 → 组号 的映射表，存在 state.groupIds 里。
+ * 一个分组键第一次出现时发一个组号，之后这个键一直用这个号。
+ * 用户改名不改键（键来自 AI 的原始结果，不受用户编辑影响），
+ * 所以组号也就不会变。
+ *
+ * 【为什么表要存在 state 而不是每次重算】
+ * 如果每次用「该组 id 最小的照片」当组号，用户单独删掉那张照片后，
+ * 组号会跳到另一张照片上，用户在输入框里打的字就丢了。
+ * 记住映射表就没这个问题。
+ */
+function groupIdFor(photos) {
+  const map = new Map();
+  for (const p of photos) {
+    if (p.status !== 'recognized' || !p.result) continue;
+    const key = groupKeyOf(p);
+    if (!map.has(key)) {
+      if (!state.groupIds.has(key)) {
+        // 第一次见到这个键 → 发号。用递增序号，和照片 id 无关，
+        // 这样删照片不会让别的组换号。
+        state.groupSeq = (state.groupSeq || 0) + 1;
+        state.groupIds.set(key, `g${state.groupSeq}`);
+      }
+      map.set(key, state.groupIds.get(key));
+    }
+  }
+  return map;
 }
 
 /**
@@ -522,30 +575,42 @@ function groupKeyOf(p) {
 function groupResults(photos) {
   const groups = [];
   const byKey = new Map();
+  // 稳定组号：同一组键映射到该组 id 最小的照片
+  const anchorMap = groupIdFor(photos);
 
   for (const p of photos) {
     const r = p.result;
     const key = groupKeyOf(p);
+    const gid = `g${anchorMap.get(key)}`;
     const name = String(r?.name || '').trim();
 
-    let g = byKey.get(key);
+    let g = byKey.get(gid);
     if (!g) {
+      const edited = state.groupEdits.get(gid) || {};
       g = {
-        key,
-        name,
-        category: r?.category || '',
-        unit: r?.unit || '',
+        key: gid, // 稳定组号 —— 改名不会改组
+        // 显示用的名字：用户改过就用用户的
+        name: edited.name ?? name,
+        category: edited.category ?? r?.category ?? '',
+        unit: edited.unit ?? r?.unit ?? '',
         tags: [...(r?.tags || [])],
         confidence: r?.confidence,
-        needConfirm: r?.needConfirm,
+        needConfirm: edited.needConfirm ?? r?.needConfirm,
         photos: [],
         quantity: 0,
+        // 用户手动改过的值：从 state 里取（不是临时的 group 对象里），
+        // 这样重画列表时用户的修改不会丢
+        edited,
       };
-      byKey.set(key, g);
+      byKey.set(gid, g);
       groups.push(g);
     }
     g.photos.push(p);
-    g.quantity += Number(r?.quantity) || 1;
+    // 累加的是「AI 原始数量」，不是用户改过的值。
+    // 用户把数量改成 3 之后，如果这里用 p.result.quantity（已被改成 3），
+    // 8 张就累加成 24 —— 数量凭空翻了 8 倍。
+    // 用户改过的数量走 g.edited.quantity，不参与累加。
+    g.quantity += Number(p.aiQuantity ?? r?.quantity) || 1;
     // 标签取并集
     for (const t of r?.tags || []) {
       if (!g.tags.includes(t)) g.tags.push(t);
@@ -560,14 +625,16 @@ function groupResults(photos) {
  * 用户改名字/数量时改的是这一份，组内所有照片跟着变 —— 不会出现「3 张叫 A、5 张叫 B」。
  */
 function groupResult(g) {
+  const e = g.edited || {};
   return {
-    name: g.name,
-    category: g.category,
+    name: e.name ?? g.name,
+    category: e.category ?? g.category,
     tags: g.tags,
-    unit: g.unit,
-    quantity: g.quantity,
+    unit: e.unit ?? g.unit,
+    // 用户改过数量就用用户的，没改就用累加值
+    quantity: e.quantity ?? g.quantity,
     confidence: g.confidence,
-    needConfirm: g.needConfirm,
+    needConfirm: e.needConfirm ?? g.needConfirm,
   };
 }
 
@@ -710,9 +777,46 @@ function groupCard(g) {
                 : ''
             }
           </div>
+          ${
+            // 【拆开】
+            // AI 有时给的名字太笼统（「数据线」），把 8 根不一样的线并成一组。
+            // 用户看到 8 张照片被合成 1 张卡，多半会觉得不对，但之前只能全留着或全删掉。
+            // 给一个「拆开」的口子：拆成 8 张独立卡片，各自改名、各自处理。
+            multi
+              ? `<div class="mt-2">
+                   <button class="chip chip-grey xs" data-split-group="${esc(g.key)}">拆开成 ${g.photos.length} 张</button>
+                 </div>`
+              : ''
+          }
         </div>
       </div>
     </div>`;
+}
+
+/**
+ * 把一组拆成若干张独立卡片。
+ *
+ * 【为什么要这个】
+ * AI 认名字有的时候很笼统 —— 8 根不一样的线全被叫成「数据线」，
+ * 合并成 1 张卡。用户其实认得出哪根是哪根，但界面只给了一张卡，
+ * 只能全存或全删，没法分开处理。
+ * 拆开后每张一张卡，名字、数量都能各自改。
+ *
+ * 实现：给组内每张照片发一个新的「分组键」，让它落到自己那一组。
+ * 注意不能改 aiName（那会破坏和后端的口径），所以用 splits 记录拆分关系。
+ */
+function splitGroup(key) {
+  const groups = groupResults(state.photos);
+  const g = groups.find((x) => x.key === key);
+  if (!g || g.photos.length < 2) return;
+
+  // 每张照片分到各自的新组
+  for (const p of g.photos) {
+    p.aiName = `${p.aiName || ''}__split_${p.id}`;
+  }
+  // 原来这组的编辑记录作废（名字/数量都不再适用）
+  state.groupEdits.delete(key);
+  renderResults();
 }
 
 /** 认不出来的那张：单独一张卡，给「重新识别 / 手动填写」两条出路 */
@@ -745,13 +849,13 @@ function bindResultEvents() {
     const isGroup = row.dataset.group === '1';
 
     // 找到这一组对应的照片。
-    // 组的 key 是「归一化后的名字」，直接按同样的规则重新算一遍 key 来匹配，
-    // 不用反查分组结构 —— 逻辑跟 groupResults 保持一致，改一处两处都对。
-    const members = state.photos.filter((p) => {
-      if (p.status !== 'recognized' || !p.result) return false;
-      if (isGroup) return groupKeyOf(p) === key;
-      return String(p.id) === key;
-    });
+    // 组的 key 现在是「稳定组号」，直接用 groupResults 反查 —— 不重新算分组，
+    // 免得改名之后组号对不上、成员找不到。
+    const groups = groupResults(state.photos);
+    const g = isGroup ? groups.find((x) => x.key === key) : null;
+    const members = g
+      ? g.photos
+      : state.photos.filter((p) => String(p.id) === key && p.status === 'recognized' && p.result);
 
     if (!members.length) return;
 
@@ -759,11 +863,26 @@ function bindResultEvents() {
       input.addEventListener('input', () => {
         const f = input.dataset.field;
         const value = f === 'quantity' ? Number(input.value) || 1 : input.value;
-        for (const p of members) {
-          if (!p.result) continue;
-          p.result[f] = value;
-          // 用户动过手就别再标「待确认」
-          if (f === 'name' || f === 'category') p.result.needConfirm = false;
+
+        if (g) {
+          // 组的值存在 state.groupEdits 里 —— 改一次整组跟着变，
+          // 而且不会被「累加」放大（之前把值写回每张照片，改数量会变成 8×3=24）
+          const ed = state.groupEdits.get(key) || {};
+          ed[f] = value;
+          if (f === 'name' || f === 'category') ed.needConfirm = false;
+          state.groupEdits.set(key, ed);
+          // 组内成员也同步一份，保证提交时能拿到
+          for (const p of members) {
+            if (!p.result) continue;
+            p.result[f] = value;
+            if (f === 'name' || f === 'category') p.result.needConfirm = false;
+          }
+        } else {
+          for (const p of members) {
+            if (!p.result) continue;
+            p.result[f] = value;
+            if (f === 'name' || f === 'category') p.result.needConfirm = false;
+          }
         }
       });
     });
@@ -780,6 +899,9 @@ function bindResultEvents() {
         if (r?.status === 'ok' || r?.result) {
           p.status = 'recognized';
           p.result = r.result || r;
+          // 存下 AI 的原始名字 —— 分组键要用它，用户改名字不影响分组
+          p.aiName = p.result?.name || '';
+          p.aiQuantity = Number(p.result?.quantity) || 1;
         } else {
           toast(r?.error || '还是没认出来', true);
         }
@@ -796,11 +918,15 @@ function bindResultEvents() {
       if (!p) return;
       p.status = 'recognized';
       p.result = { name: '', category: '待确认', tags: [], quantity: 1, unit: null, needConfirm: false };
+      // 手动填的算自成一组 —— aiName 留空，分组键就是 __solo_<id>
+      p.aiName = '';
+      p.aiQuantity = 1;
       renderResults();
       // 聚焦到名称输入框，省一次点击。
-      // 手动填的名字是空的，会被分到自己一组（key = __solo_<id>），
-      // 所以按这个 key 找卡片，而不是按照片 id 找。
-      const row = document.querySelector(`[data-row="__solo_${p.id}"]`);
+      // 手动填的这张自成一组，组号是稳定组号（g1、g2…），
+      // 所以要从 groupResults 里反查它的组号，不能按 __solo_<id> 找。
+      const grp = groupResults(state.photos).find((x) => x.photos.some((m) => m.id === p.id));
+      const row = grp ? document.querySelector(`[data-row="${grp.key}"]`) : null;
       row?.querySelector('[data-field="name"]')?.focus();
     });
   });
@@ -813,6 +939,15 @@ function bindResultEvents() {
       e.preventDefault();
       e.stopPropagation();
       dropPhoto(Number(btn.dataset.drop));
+    });
+  });
+
+  // 「拆开成 N 张」—— AI 名字太笼统导致误合并时，给用户一条退路
+  list.querySelectorAll('[data-split-group]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      splitGroup(btn.dataset.splitGroup);
     });
   });
 
@@ -854,14 +989,20 @@ function dropPhoto(id) {
  * 而不是让用户点 8 次。
  */
 function dropGroup(key) {
-  const targets = state.photos.filter((p) => groupKeyOf(p) === key);
+  // key 现在是稳定组号，得按组号反查成员 —— 不能再按名字找，
+  // 否则用户改过名字之后这组就再也删不掉了。
+  const groups = groupResults(state.photos);
+  const g = groups.find((x) => x.key === key);
+  const targets = g ? g.photos : [];
   if (!targets.length) return;
 
   for (const p of targets) {
     if (p.localUrl) URL.revokeObjectURL(p.localUrl);
     if (p.thumbUrl && p.thumbUrl !== p.localUrl) URL.revokeObjectURL(p.thumbUrl);
   }
-  state.photos = state.photos.filter((p) => groupKeyOf(p) !== key);
+  const ids = new Set(targets.map((p) => p.id));
+  state.photos = state.photos.filter((p) => !ids.has(p.id));
+  state.groupEdits.delete(key);
 
   const count = state.photos.length;
   document.getElementById('photo-count').textContent = String(count);
@@ -954,22 +1095,33 @@ function buildSubmitItems() {
 
   return groups
     .map((g) => {
-      // 用组内第一张的结果作为基准（用户在卡片上改的值已经同步到所有成员上了）
+      // 组内第一张的结果作为基准（用户在卡片上改的值已经同步到所有成员上了）
       const base = g.photos[0]?.result || {};
-      const name = String(base.name || g.name || '').trim();
+      const ed = g.edited || {};
+
+      // 【名称取用户改过的，没有就用 AI 的】
+      const name = String(ed.name ?? base.name ?? g.name ?? '').trim();
+
+      // 【数量：用户改过就用用户的，没改就用组内累加值】
+      // 这里不能拿 base.quantity —— 那是第一张照片的数量（恒为 1）。
+      // 8 张一样的线，AI 每张都给 1，累加起来才是 8。
+      // 之前写 `base.quantity ?? g.quantity`，base.quantity 不是 null，
+      // ?? 永远走不到 g.quantity，8 张线只存成 1 条，数量凭空少 7。
+      const quantity = ed.quantity ?? g.quantity;
+
       return {
         imageIds: g.photos.map((p) => p.id).filter(Boolean),
         name,
-        category: base.category ?? g.category,
+        category: ed.category ?? base.category ?? g.category,
         tags: base.tags?.length ? base.tags : g.tags,
-        quantity: Number(base.quantity ?? g.quantity) || 1,
-        unit: base.unit ?? g.unit,
+        quantity: Number(quantity) > 0 ? Number(quantity) : 1,
+        unit: ed.unit ?? base.unit ?? g.unit,
         description: base.description,
         brand: base.brand,
         model: base.model,
         color: base.color,
         confidence: base.confidence ?? g.confidence,
-        needConfirm: base.needConfirm ?? g.needConfirm,
+        needConfirm: ed.needConfirm ?? base.needConfirm ?? g.needConfirm,
       };
     })
     .filter((x) => x.name);
@@ -1003,11 +1155,19 @@ async function submitAll({ useAiNames = false } = {}) {
 
   try {
     const { data } = await api.batchInbound({ containerId: boxId, items });
-    toast(
-      boxId
-        ? `放进去了 ${data.createdCount} 件东西`
-        : `记下了 ${data.createdCount} 件东西（暂未放入盒子）`
-    );
+    // 【提示要说人话】
+    // itemCount   = 实际入库的物品条数（同款合并后可能比提交项数少）
+    // totalQuantity = 物品总件数（数量加起来）
+    // 例：拍 8 根一样的线 → 1 样东西，共 8 根。
+    //     早先只显示 createdCount（提交项数），8 根线会提示「放进去了 8 件东西」，
+    //     但盒子里其实只有 1 样东西（数量 8），用户一看就懵。
+    const kinds = Number(data.itemCount ?? data.createdCount) || 0;
+    const total = Number(data.totalQuantity) || 0;
+    const verb = boxId ? '放进去了' : '记下了';
+    let msg = `${verb} ${kinds} 样东西`;
+    if (total > kinds) msg += `，共 ${total} 件`;
+    if (!boxId) msg += '（暂未放入盒子）';
+    toast(msg);
     if (data.failed?.length) {
       console.warn('部分失败', data.failed);
       toast(`有 ${data.failed.length} 件没存上`, true);
