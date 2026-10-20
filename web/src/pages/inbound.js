@@ -493,6 +493,11 @@ function renderPhotos() {
  *   - 置信度低于 0.5 → 各自成组（认错了合在一起更麻烦）
  *
  * groupResults 和 bindResultEvents 都用这个函数，保证两边的分组口径完全一致。
+ *
+ * 【口径必须和后端一致】
+ * 后端 item.repo.findItemByName 用同样的规则（去所有空白 + 转小写）去找同款。
+ * 两边规则不一样的话，「USB-C 数据线」和「USB-C数据线」在前端是一组、
+ * 到后端却成了两件 —— 同一根线在库里出现两次，搜索出来两条重复结果。
  */
 function groupKeyOf(p) {
   const r = p?.result;

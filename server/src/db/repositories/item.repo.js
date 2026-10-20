@@ -65,9 +65,17 @@ export function getItemByIdRaw(id) {
  * 匹配规则刻意保守：只比名字（去空白、忽略大小写），
  * 分类不同也照样合并 —— 因为分类是 AI 猜的，本来就可能这次叫「电子配件」
  * 下次叫「线材」，拿它当合并依据反而会漏合。
+ *
+ * 【去空白必须去掉「中间」的空白，不能只 TRIM】
+ * 前端归组用的是 name.toLowerCase().replace(/\s+/g, '')，
+ * 会把「USB-C 数据线」和「USB-C数据线」当成同一个。
+ * 这里如果只写 LOWER(TRIM(name))，中间那个空格还在，
+ * 两边口径就对不上了 —— 同一根线，AI 这次写「USB-C数据线」、
+ * 下次写「USB-C 数据线」，就会在库里多出一件重复物品。
+ * 所以后端也用同样的规则：把名字里所有空白字符都去掉再比。
  */
 export function findItemByName(familyId, name) {
-  const key = String(name || '').trim().toLowerCase();
+  const key = normalizeItemName(name);
   if (!key) return null;
   return (
     getDb()
@@ -78,12 +86,24 @@ export function findItemByName(familyId, name) {
            FROM items i
            LEFT JOIN categories c ON c.id = i.category_id
           WHERE i.family_id = ?
-            AND LOWER(TRIM(i.name)) = ?
+            AND LOWER(REPLACE(REPLACE(REPLACE(TRIM(i.name), ' ', ''), CHAR(9), ''), CHAR(10), '')) = ?
           ORDER BY i.id
           LIMIT 1`
       )
       .get(familyId, key) || null
   );
+}
+
+/**
+ * 物品名字的归一化 —— 和前端 groupKeyOf 必须完全一致。
+ *
+ * 规则：去掉所有空白字符 + 转小写。
+ * 「USB-C 数据线」「usb-c数据线」「 USB-C数据线 」→「usb-c数据线」
+ */
+export function normalizeItemName(name) {
+  return String(name || '')
+    .replace(/\s+/g, '')
+    .toLowerCase();
 }
 
 export function createItem(data) {
