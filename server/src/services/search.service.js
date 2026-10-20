@@ -18,10 +18,15 @@ import * as imageRepo from '../db/repositories/image.repo.js';
  */
 
 /** 给一批物品补上位置信息、标签、封面图 */
-function enrich(familyId, rows) {
+function enrich(familyId, rows, placeFilter = null) {
   if (!rows.length) return [];
   const ids = rows.map((r) => r.id);
   const tagMap = tagRepo.listTagsForItems(ids);
+
+  // 位置筛选条件：显式 chip 选中的 + 查询词里识别到的
+  const spaceSet = new Set((placeFilter?.spaceIds || []).map(Number));
+  const locSet = new Set((placeFilter?.locationIds || []).map(Number));
+  const hasPlaceFilter = spaceSet.size > 0 || locSet.size > 0;
 
   return rows.map((r) => {
     const stocks = stockRepo.listStockByItem(r.id);
@@ -31,6 +36,8 @@ function enrich(familyId, rows) {
       container_code: s.container_code,
       container_name: s.container_name,
       full_path: s.full_path,
+      space_id: s.space_id,
+      location_id: s.location_id,
       quantity: s.quantity,
       status: s.status,
       note: s.note,
@@ -39,7 +46,14 @@ function enrich(familyId, rows) {
     const cover = imageRepo.getCoverImageForItem(r.id);
 
     // 位置展示文案：在盒子里 → 显示路径；不在盒子里 → 说明当前状态
-    const primary = places.find((p) => p.in_box) || places[0] || null;
+    // 【为什么要「优先显示命中筛选的那个位置」】
+    // 一件东西可以同时放在两个盒子里（AA电池：客厅盒子08节 + 储藏室盒子08节）。
+    // 用户选了「储藏室」筛出来，如果路径却显示「客厅」，他会以为筛错了。
+    // 所以先找命中筛选条件的位置，找不到再退回第一个在盒子里的位置。
+    const matched = hasPlaceFilter
+      ? places.find((p) => p.in_box && (spaceSet.has(p.space_id) || locSet.has(p.location_id)))
+      : null;
+    const primary = matched || places.find((p) => p.in_box) || places[0] || null;
     const locationText = primary
       ? primary.in_box
         ? primary.full_path
@@ -50,7 +64,15 @@ function enrich(familyId, rows) {
       ...r,
       tags: tagMap[r.id] || [],
       places,
-      total_quantity: places.reduce((s, p) => s + Number(p.quantity || 0), 0),
+      // 位置筛选生效时，数量只算命中位置的那几处 ——
+      // 用户选「储藏室」就该看到储藏室里有几节，而不是全家的总数。
+      // 全量总数另放在 total_quantity_all，需要时前端可以展示「共 N 节」。
+      total_quantity: hasPlaceFilter && matched
+        ? places
+            .filter((p) => p.in_box && (spaceSet.has(p.space_id) || locSet.has(p.location_id)))
+            .reduce((s, p) => s + Number(p.quantity || 0), 0)
+        : places.reduce((s, p) => s + Number(p.quantity || 0), 0),
+      total_quantity_all: places.reduce((s, p) => s + Number(p.quantity || 0), 0),
       container_count: places.filter((p) => p.in_box).length,
       location_text: locationText,
       cover_thumb_url: cover?.thumb_url || cover?.url || null,
@@ -104,7 +126,10 @@ function detectPlaceFilter(familyId, keyword) {
   };
 }
 
-export function search(familyId, { q = '', type = 'keyword', categoryId = null, tag = null, limit = 30 }) {
+export function search(
+  familyId,
+  { q = '', type = 'keyword', categoryId = null, tag = null, limit = 30, spaceIds = [], locationIds = [] }
+) {
   const keyword = String(q || '').trim();
 
   if (type === 'category' || categoryId) {
@@ -133,11 +158,37 @@ export function search(familyId, { q = '', type = 'keyword', categoryId = null, 
     };
   }
 
-  if (!keyword) return { type: 'keyword', query: '', items: [], suggestions: {} };
+  // 显式位置过滤（搜索页那排 chip 选中的）先准备好
+  const explicitSpaceIds = (Array.isArray(spaceIds) ? spaceIds : []).map(Number).filter((n) => Number.isInteger(n));
+  const explicitLocationIds = (Array.isArray(locationIds) ? locationIds : []).map(Number).filter((n) => Number.isInteger(n));
+  const hasExplicit = explicitSpaceIds.length || explicitLocationIds.length;
 
   // 位置词先摘出来，剩下的才是要找的东西
   const { filter, keyword: rest, matched } = detectPlaceFilter(familyId, keyword);
-  const rows = searchRepo.searchItemsByKeyword(familyId, rest || keyword, limit, filter);
+
+  // 显式筛选 + 查询词里识别到的位置词，合并成一个过滤条件
+  const finalFilter = hasExplicit
+    ? {
+        spaceIds: [...new Set([...explicitSpaceIds, ...(filter?.spaceIds || [])])],
+        locationIds: [...new Set([...explicitLocationIds, ...(filter?.locationIds || [])])],
+      }
+    : filter;
+
+  // 全都有位置限定、又没有关键词 → 按位置列出所有东西
+  if (!rest && !keyword && hasExplicit) {
+    const rows = searchRepo.searchItemsByPlace(familyId, finalFilter, limit);
+    return {
+      type: 'keyword',
+      query: '',
+      place_filter: matched.length ? matched : null,
+      items: enrich(familyId, rows, finalFilter),
+      suggestions: {},
+    };
+  }
+
+  if (!keyword && !hasExplicit) return { type: 'keyword', query: '', items: [], suggestions: {} };
+
+  const rows = searchRepo.searchItemsByKeyword(familyId, rest || keyword, limit, finalFilter);
 
   return {
     type: 'keyword',
@@ -145,7 +196,7 @@ export function search(familyId, { q = '', type = 'keyword', categoryId = null, 
     // 告诉前端「限定了哪些位置」，搜索框下面要显示出来，
     // 不然用户会疑惑为什么搜「电视线」少了那么多结果
     place_filter: matched.length ? matched : null,
-    items: enrich(familyId, rows),
+    items: enrich(familyId, rows, finalFilter),
     // 顺带给出分类/标签/盒子的相关命中，方便用户换一种方式找
     suggestions: {
       categories: searchRepo.searchCategories(familyId, keyword),

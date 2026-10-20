@@ -198,6 +198,11 @@ export const api = {
   removeStock: (id) => del(`/api/stocks/${id}`),
 
   // ---------- 搜索 ----------
+  /**
+   * 搜索。
+   * spaceIds / locationIds 是搜索页那排位置 chip 传过来的显式过滤条件
+   * （逗号分隔的 id 列表）。不传就只按关键词搜。
+   */
   search: (params) => get('/api/search', params),
 
   // ---------- 分类 / 标签 ----------

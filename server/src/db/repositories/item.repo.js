@@ -48,6 +48,44 @@ export function getItemByIdRaw(id) {
   return getDb().prepare('SELECT * FROM items WHERE id = ?').get(id);
 }
 
+/**
+ * 按名字找已存在的物品。
+ *
+ * 【为什么需要】
+ * item 表的语义是「物品规格」——AA电池、HDMI线，**不是**「某一根线」。
+ * 同一类东西在家里有 3 根，正确的建模是：1 个 item + 3 条 stock。
+ *
+ * 但入库时如果每次都 createItem，就会出现 3 个叫「HDMI线」的 item，
+ * 搜索出 3 条、盒子详情里也是 3 行 —— 数量还各自是 1。
+ * 这正是「同件物品多位置」这个设计想避免的情况。
+ *
+ * 所以入库前先按名字找一下：找到了就复用（只加库存），
+ * 找不到才新建。
+ *
+ * 匹配规则刻意保守：只比名字（去空白、忽略大小写），
+ * 分类不同也照样合并 —— 因为分类是 AI 猜的，本来就可能这次叫「电子配件」
+ * 下次叫「线材」，拿它当合并依据反而会漏合。
+ */
+export function findItemByName(familyId, name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return null;
+  return (
+    getDb()
+      .prepare(
+        `SELECT i.*,
+                c.name  AS category_name,
+                c.icon  AS category_icon
+           FROM items i
+           LEFT JOIN categories c ON c.id = i.category_id
+          WHERE i.family_id = ?
+            AND LOWER(TRIM(i.name)) = ?
+          ORDER BY i.id
+          LIMIT 1`
+      )
+      .get(familyId, key) || null
+  );
+}
+
 export function createItem(data) {
   const info = getDb()
     .prepare(

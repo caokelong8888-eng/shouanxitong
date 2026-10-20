@@ -18,6 +18,8 @@ const BASE_SELECT = `
          c.code AS container_code,
          c.name AS container_name,
          c.full_path,
+         c.space_id,
+         c.location_id,
          i.name AS item_name,
          i.unit
     FROM stock st

@@ -1,7 +1,10 @@
 node_modules/
 dist/
 data/
-storage/
+# 只忽略「根目录的」storage 目录（放上传图片的）。
+# 必须写成 /storage/ —— 写成 storage/ 会连 server/src/adapters/storage/ 一起忽略掉，
+# 那个目录是存储适配器源码，漏掉它服务直接起不来（ERR_MODULE_NOT_FOUND）。
+/storage/
 *.log
 .DS_Store
 .env
@@ -15,3 +18,7 @@ server.bak*/
 web.bak*/
 *.tgz
 *.db
+
+# 端到端测试的截图产物
+.test-out/
+.playwright-cli/

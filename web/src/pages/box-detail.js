@@ -15,6 +15,7 @@ import {
 import { navigate } from '../router.js';
 import { renderBottomNav } from '../components/bottom-nav.js';
 import { openCamera } from '../services/camera.js';
+import { startPhotoFlow } from '../services/photo-flow.js';
 import { compressImage } from '../services/image-compress.js';
 
 /**
@@ -202,13 +203,8 @@ export async function boxDetailPage({ app, params }) {
     bindZoom(body); // 里面的东西缩略图也能点开看
 
     document.getElementById('btn-add-here')?.addEventListener('click', () => {
-      // 就地唤起相机，拍完带着照片去入库页 —— 不先跳页面，否则浏览器会拦掉弹窗
-      openCamera({
-        onDone: (files) => {
-          if (!files.length) return; // 用户取消了
-          navigate(`/inbound?containerId=${box.id}`);
-        },
-      });
+      // 位置已经确定（就是这个盒子），直接开相机 —— 不先跳页面，否则浏览器会拦掉弹窗
+      startPhotoFlow({ containerId: box.id });
     });
 
     document.getElementById('btn-menu')?.addEventListener('click', showMenu);

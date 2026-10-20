@@ -48,29 +48,75 @@ function resolveCategory(familyId, categoryName) {
 /**
  * 把一件物品完整写入库：建物品 → 标签 → 库存 → 绑照片。
  * 整体包在一个事务里，任一步失败则整条回滚，不留半条数据。
+ *
+ * 【同款合并】
+ * 库里已经有同名物品时不再新建，而是复用它、只把数量加上。
+ * item 的语义是「物品规格」而不是「某一根线」——
+ * 家里 3 根 HDMI 线应该是 1 个 item + 数量 3，而不是 3 个 item 各 1 根。
+ * 之前每次都新建，搜索会出来 3 条重复结果，盒子详情里也是 3 行。
+ *
+ * 复用时要注意别把用户原来的信息冲掉：
+ *   - 分类：原来的有就保留（AI 这次分类猜错了也不能改用户的）
+ *   - 标签：取并集，不覆盖
+ *   - 描述/品牌等：原来的有就保留
  */
 function persistInboundItem(p) {
   const db = getDb();
   const run = db.transaction(() => {
     const category = resolveCategory(p.familyId, p.categoryName);
 
-    const item = itemRepo.createItem({
-      familyId: p.familyId,
-      name: p.name,
-      categoryId: category?.id ?? null,
-      description: p.description,
-      brand: p.brand,
-      model: p.model,
-      color: p.color,
-      unit: p.unit,
-      status: 'in_box',
-      aiConfidence: p.aiConfidence,
-      needConfirm: p.needConfirm,
-      userId: p.userId,
-    });
+    // 先找同款的已有物品
+    const existing = itemRepo.findItemByName(p.familyId, p.name);
 
-    if (p.tags?.length) tagRepo.setItemTags(item.id, p.familyId, p.tags);
-    itemRepo.refreshSearchText(item.id);
+    let item;
+    let merged = false;
+
+    if (existing) {
+      // 复用已有物品，只加库存
+      item = existing;
+      merged = true;
+
+      // 标签取并集：新照片带来的新标签补上，老的不删
+      if (p.tags?.length) {
+        const oldTags = tagRepo.listItemTags(item.id).map((t) => t.name);
+        const merged2 = [...new Set([...oldTags, ...p.tags.map((t) => String(t).trim()).filter(Boolean)])];
+        if (merged2.length !== oldTags.length) {
+          tagRepo.setItemTags(item.id, p.familyId, merged2);
+        }
+      }
+
+      // 补上缺失的字段（原来是空、这次有值的才补）
+      const patch = {};
+      if (!item.description && p.description) patch.description = p.description;
+      if (!item.brand && p.brand) patch.brand = p.brand;
+      if (!item.model && p.model) patch.model = p.model;
+      if (!item.color && p.color) patch.color = p.color;
+      if (!item.unit && p.unit) patch.unit = p.unit;
+      if (!item.category_id && category) patch.categoryId = category.id;
+      if (Object.keys(patch).length) {
+        itemRepo.updateItem(item.id, p.familyId, { ...patch, userId: p.userId });
+        item = itemRepo.getItem(item.id, p.familyId);
+      }
+      itemRepo.refreshSearchText(item.id);
+    } else {
+      item = itemRepo.createItem({
+        familyId: p.familyId,
+        name: p.name,
+        categoryId: category?.id ?? null,
+        description: p.description,
+        brand: p.brand,
+        model: p.model,
+        color: p.color,
+        unit: p.unit,
+        status: 'in_box',
+        aiConfidence: p.aiConfidence,
+        needConfirm: p.needConfirm,
+        userId: p.userId,
+      });
+
+      if (p.tags?.length) tagRepo.setItemTags(item.id, p.familyId, p.tags);
+      itemRepo.refreshSearchText(item.id);
+    }
 
     // upsert 保证「同一物品 + 同一盒子」只保留一条库存记录，重复放入时累加数量
     const qty = Number.isFinite(Number(p.quantity)) && Number(p.quantity) > 0 ? Number(p.quantity) : 1;
@@ -87,7 +133,7 @@ function persistInboundItem(p) {
       imageRepo.bindImagesToItem(p.imageIds, item.id, imgs[0]?.id ?? null);
     }
 
-    return { itemId: item.id, quantity: qty, unit: item.unit };
+    return { itemId: item.id, quantity: qty, unit: item.unit, merged };
   });
   return run();
 }
@@ -303,7 +349,14 @@ export async function batchInbound(req, res) {
       };
 
       const saved = persistInboundItem(payload);
-      created.push({ itemId: saved.itemId, name, quantity: saved.quantity, unit: saved.unit });
+      created.push({
+        itemId: saved.itemId,
+        name,
+        quantity: saved.quantity,
+        unit: saved.unit,
+        // true = 库里已有同款，这次是把数量加上而不是新建
+        merged: !!saved.merged,
+      });
     } catch (err) {
       failed.push({ name: row?.name || '(未命名)', message: err.message });
     }

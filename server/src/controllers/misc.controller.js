@@ -19,8 +19,21 @@ export function search(req, res) {
     categoryId: req.query.categoryId,
     tag: req.query.tag,
     limit: parseLimit(req.query.limit, 30),
+    // 搜索页那排「位置筛选 chip」点过来的显式过滤条件。
+    // 可以是逗号分隔的多个 id（前端允许多选：客厅 + 电视柜）。
+    spaceIds: parseIdList(req.query.spaceIds),
+    locationIds: parseIdList(req.query.locationIds),
   });
   return ok(res, result);
+}
+
+/** 把 "1,2,3" 或 "1" 解析成 id 数组；不是合法 id 的直接丢掉 */
+function parseIdList(raw) {
+  if (raw === undefined || raw === null || raw === '') return [];
+  const list = Array.isArray(raw) ? raw : String(raw).split(',');
+  return list
+    .map((n) => Number(String(n).trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
 }
 
 /* ---------------- 分类 ---------------- */

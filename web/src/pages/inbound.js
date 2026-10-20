@@ -3,6 +3,7 @@ import { esc, thumbHtml, toast, pickSheet, confirmSheet, STATUS_LABEL, bindZoom 
 import { navigate } from '../router.js';
 import { renderBottomNav } from '../components/bottom-nav.js';
 import { openCamera, takePendingFiles, peekPendingMark, clearPendingMark } from '../services/camera.js';
+import { rememberContainer } from '../services/destination.js';
 
 /**
  * 入库页（/inbound）——「拍照 → 确认 → 放进盒子」的后半段。
@@ -23,6 +24,7 @@ const state = {
   photos: [], // { id, thumbUrl, url, file, status, result, error }
   containerId: null,
   containerName: null,
+  containerPath: null,
   busy: false,
 };
 
@@ -31,9 +33,13 @@ export async function inboundPage({ app, query }) {
   state.photos = [];
   state.containerId = null;
   state.containerName = null;
+  state.containerPath = null;
   state.busy = false;
 
-  // 从盒子详情进来时预选盒子，省一次点击
+  // 【位置在拍之前就定了】
+  // 从底部「＋」进来时，用户已经在「放进哪儿」面板里选好了盒子，
+  // 这里直接接上 —— 拍完不用再想放哪。
+  // 从盒子详情进来时预选盒子，省一次点击。
   const preferredId = query?.containerId || sessionStorage.getItem('preferredContainerId') || '';
   if (preferredId) {
     state.containerId = Number(preferredId);
@@ -84,17 +90,17 @@ export async function inboundPage({ app, query }) {
           <div id="result-list"></div>
         </div>
 
-        <!-- 选盒子（可选） -->
+        <!-- 位置（拍之前就定好了，这里只允许改，不要求选） -->
         <div class="section hidden" id="submit-section">
           <div class="card card-pad">
             <div class="flex between">
-              <div class="grow">
-                <div class="xs muted">放进哪个盒子（可以不选）</div>
+              <div class="grow" style="min-width:0;">
+                <div class="xs muted">放进哪儿</div>
                 <div id="chosen-box" style="font-weight:600;margin-top:2px;">暂不指定位置</div>
               </div>
-              <button class="btn btn-ghost" id="btn-pick-box">选择</button>
+              <button class="btn btn-ghost" id="btn-pick-box">更改</button>
             </div>
-            <div class="xs muted mt-2">
+            <div class="xs muted mt-2" id="box-hint">
               有些东西只是先记下来、不一定马上归位，不选盒子也能直接提交，之后想放再放。
             </div>
           </div>
@@ -105,8 +111,16 @@ export async function inboundPage({ app, query }) {
         提交条吸在底部。
         原来按钮跟着内容往下走，AI 认完一屏就够不着了 —— 得滚动去找「全部放进去」，
         拍照入库最关键的一步反而最难点。固定在底部导航之上，随时能按。
+
+        两个按钮：
+          - 「按 AI 结果存下」：一键把认出来的东西原样全存。绝大多数情况下用户就是想让
+            AI 认完直接存，个别认错了再回来改也不迟 —— 这一键把 5 步操作压成 1 步。
+          - 「全部放进去」：主体按钮。改了名字/数量后按这个。
       -->
       <div class="submit-bar hidden" id="submit-bar">
+        <button class="btn btn-ghost btn-block" id="btn-submit-all" style="margin-bottom:var(--s-2);">
+          按 AI 认出的结果全部存下
+        </button>
         <button class="btn btn-primary btn-lg btn-block" id="btn-submit" disabled>全部放进去</button>
       </div>
     </div>
@@ -153,12 +167,12 @@ export async function inboundPage({ app, query }) {
 
   document.getElementById('btn-pick-box').addEventListener('click', pickBox);
   document.getElementById('btn-submit').addEventListener('click', submitAll);
+  document.getElementById('btn-submit-all').addEventListener('click', () => submitAll({ useAiNames: true }));
 
   // 拍好的照片从 camera.js 取过来，直接开始上传识别
   const files = takePendingFiles();
   if (files?.length) {
     handleFiles(files);
-    if (state.containerId) restorePreferredBox();
   } else {
     // 再也拿不到照片了，但标记显示刚才拍过 —— 说明中途切页面丢掉了，得说清楚
     const lost = peekPendingMark();
@@ -169,19 +183,55 @@ export async function inboundPage({ app, query }) {
     }
     document.getElementById('empty-card').classList.remove('hidden');
   }
+
+  // 位置先渲染出来（哪怕还没照片），用户一进来就知道东西会去哪
+  if (state.containerId) {
+    restorePreferredBox();
+  } else {
+    renderChosenBox();
+  }
 }
 
-/** 盒子详情带过来的预选盒子：补上名字和路径 */
+/**
+ * 盒子详情带过来的预选盒子：补上名字和路径
+ */
 async function restorePreferredBox() {
   try {
     const { data } = await api.listContainers();
     const c = (data || []).find((x) => Number(x.id) === Number(state.containerId));
     if (!c) return;
     state.containerName = c.name;
-    const el = document.getElementById('chosen-box');
-    if (el) el.innerHTML = `${esc(c.name)} <span class="xs muted">${esc(c.full_path || '')}</span>`;
+    state.containerPath = c.full_path || '';
+    renderChosenBox();
   } catch {
     /* 拿不到就算了，用户还能手动选 */
+  }
+}
+
+/**
+ * 渲染「放进哪儿」这一行。
+ *
+ * 位置在拍之前就定了，所以这里主要是在展示，不是让用户做决定。
+ * 但仍然留着「更改」按钮 —— 万一选错了，或者拍着拍着想换个盒子，改一下就行。
+ */
+function renderChosenBox() {
+  const el = document.getElementById('chosen-box');
+  const hint = document.getElementById('box-hint');
+  if (!el) return;
+
+  if (state.containerId) {
+    const name = state.containerName || '这个盒子';
+    el.innerHTML = state.containerPath
+      ? `${esc(name)} <span class="xs muted">${esc(state.containerPath)}</span>`
+      : esc(name);
+    if (hint) {
+      hint.textContent = '位置已经定好了，拍完直接放这儿。要换地方点「更改」。';
+    }
+  } else {
+    el.textContent = '暂不指定位置';
+    if (hint) {
+      hint.textContent = '有些东西只是先记下来、不一定马上归位，不选盒子也能直接提交，之后想放再放。';
+    }
   }
 }
 
@@ -434,14 +484,97 @@ function renderPhotos() {
   bindZoom(grid); // 点照片看大图
 }
 
+/**
+ * 算出这张照片的「同款分组键」。
+ *
+ * 规则：
+ *   - 名字去掉空白、忽略大小写
+ *   - 名字为空 → 各自成组（不合并没名字的东西）
+ *   - 置信度低于 0.5 → 各自成组（认错了合在一起更麻烦）
+ *
+ * groupResults 和 bindResultEvents 都用这个函数，保证两边的分组口径完全一致。
+ */
+function groupKeyOf(p) {
+  const r = p?.result;
+  const name = String(r?.name || '').trim();
+  if (!name) return `__solo_${p.id}`;
+  const confident = r?.confidence === undefined || r?.confidence === null || r.confidence >= 0.5;
+  if (!confident) return `__solo_${p.id}`;
+  return name.toLowerCase().replace(/\s+/g, '');
+}
+
+/**
+ * 把识别结果按「同款」归组。
+ *
+ * 【为什么要归组】
+ * 整理一箱东西经常是「8 根一样的线」「5 个一样的螺丝刀」。
+ * AI 会把这 8 张全认成「USB-C数据线」，于是用户面前出现 8 张长得差不多的卡片，
+ * 每张都要看一眼、确认一下名字 —— 但它们本来就是同一样东西。
+ *
+ * 归组之后：8 张合成 1 张卡片，缩略图叠在一起显示「8 张」，
+ * 数量自动加成 8。用户只确认一次，剩下的 7 张自动跟着。
+ */
+function groupResults(photos) {
+  const groups = [];
+  const byKey = new Map();
+
+  for (const p of photos) {
+    const r = p.result;
+    const key = groupKeyOf(p);
+    const name = String(r?.name || '').trim();
+
+    let g = byKey.get(key);
+    if (!g) {
+      g = {
+        key,
+        name,
+        category: r?.category || '',
+        unit: r?.unit || '',
+        tags: [...(r?.tags || [])],
+        confidence: r?.confidence,
+        needConfirm: r?.needConfirm,
+        photos: [],
+        quantity: 0,
+      };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    g.photos.push(p);
+    g.quantity += Number(r?.quantity) || 1;
+    // 标签取并集
+    for (const t of r?.tags || []) {
+      if (!g.tags.includes(t)) g.tags.push(t);
+    }
+  }
+
+  return groups;
+}
+
+/**
+ * 组内所有照片共用一个结果对象。
+ * 用户改名字/数量时改的是这一份，组内所有照片跟着变 —— 不会出现「3 张叫 A、5 张叫 B」。
+ */
+function groupResult(g) {
+  return {
+    name: g.name,
+    category: g.category,
+    tags: g.tags,
+    unit: g.unit,
+    quantity: g.quantity,
+    confidence: g.confidence,
+    needConfirm: g.needConfirm,
+  };
+}
+
 function renderResults() {
   const section = document.getElementById('result-section');
   const list = document.getElementById('result-list');
   // 「上传完但还在排队等 AI」的照片也要占个位，
   // 否则用户会以为照片丢了 —— 尤其现在改成逐张出结果，中间会有等待间隙。
   const pending = state.photos.filter((p) => p.status === 'uploaded');
-  const recognizable = state.photos.filter((p) => p.status === 'recognized' || p.status === 'error');
-  if (!recognizable.length && !pending.length) {
+  const errors = state.photos.filter((p) => p.status === 'error');
+  const okPhotos = state.photos.filter((p) => p.status === 'recognized' && p.result);
+  if (!okPhotos.length && !pending.length && !errors.length) {
     section.classList.add('hidden');
     return;
   }
@@ -457,7 +590,10 @@ function renderResults() {
     refocus = { row: active.closest('[data-row]')?.dataset.row, field: active.dataset.field, pos: active.selectionStart };
   }
 
-  list.innerHTML = `<div class="card">${pending.map(pendingCard).join('')}${recognizable.map(resultCard).join('')}</div>`;
+  // 同款归组：8 根一样的线 → 1 张卡片
+  const groups = groupResults(okPhotos);
+
+  list.innerHTML = `<div class="card">${pending.map(pendingCard).join('')}${groups.map(groupCard).join('')}${errors.map(errorCard).join('')}</div>`;
   bindResultEvents();
   bindZoom(list); // 识别结果里的照片也能点开看
 
@@ -505,32 +641,44 @@ function dropButton(id) {
             style="position:absolute;top:8px;right:8px;width:30px;height:30px;flex-shrink:0;">✕</button>`;
 }
 
-function resultCard(p) {
-  const r = p.result;
+/**
+ * 同款归组后的卡片。
+ *
+ * 一张卡代表一样东西。组内多张照片叠在一起显示，右上角标「N 张」，
+ * 数量自动累加 —— 用户看到 8 根线只占一张卡，改一次名字就全组生效。
+ */
+function groupCard(g) {
+  const r = groupResult(g);
+  const multi = g.photos.length > 1;
 
-  if (p.status === 'error') {
-    return `
-      <div class="card-pad" style="border-bottom:1px solid var(--c-border);position:relative;">
-        ${dropButton(p.id)}
-        <div class="flex gap-3">
-          ${thumbHtml(p.thumbUrl, { alt: '照片', cls: 'thumb', zoom: true, fullUrl: p.localUrl || p.url || p.thumbUrl })}
-          <div class="grow">
-            <div class="chip chip-danger xs">暂时认不出来</div>
-            <div class="xs muted mt-1">${esc(p.error || '这张图 AI 没看懂')}</div>
-            <div class="flex gap-2 mt-3">
-              <button class="chip chip-grey" data-retry="${p.id}">重新识别</button>
-              <button class="chip chip-grey" data-manual="${p.id}">手动填写</button>
-            </div>
-          </div>
-        </div>
-      </div>`;
-  }
+  // 缩略图：多张时叠成一摞，露出下面几张的边
+  const thumbs = multi
+    ? `
+      <div style="position:relative;width:56px;height:56px;flex-shrink:0;">
+        ${g.photos
+          .slice(0, 3)
+          .map(
+            (p, i) => `
+          <div style="position:absolute;left:${i * 5}px;top:${i * 5}px;width:46px;height:46px;border-radius:var(--r-sm);overflow:hidden;background:var(--c-surface-soft);${i ? 'box-shadow:0 0 0 2px var(--c-surface);' : ''}">
+            ${thumbHtml(p.thumbUrl, { alt: r.name, cls: '', zoom: true, fullUrl: p.localUrl || p.url || p.thumbUrl })}
+          </div>`
+          )
+          .join('')}
+        <span style="position:absolute;right:-4px;bottom:-4px;background:var(--c-text);color:var(--c-surface);font-size:10px;font-weight:600;border-radius:999px;padding:1px 6px;line-height:1.5;">${g.photos.length} 张</span>
+      </div>`
+    : thumbHtml(g.photos[0].thumbUrl, {
+        alt: r.name,
+        cls: 'thumb',
+        zoom: true,
+        fullUrl: g.photos[0].localUrl || g.photos[0].url || g.photos[0].thumbUrl,
+      });
 
   return `
-    <div class="card-pad" style="border-bottom:1px solid var(--c-border);position:relative;" data-row="${p.id}">
-      ${dropButton(p.id)}
+    <div class="card-pad" style="border-bottom:1px solid var(--c-border);position:relative;" data-row="${esc(g.key)}" data-group="1">
+      <button class="row-del" data-drop-group="${esc(g.key)}" aria-label="不要这些"
+              style="position:absolute;top:8px;right:8px;width:30px;height:30px;flex-shrink:0;">✕</button>
       <div class="flex gap-3" style="align-items:flex-start;">
-        ${thumbHtml(p.thumbUrl, { alt: r.name, cls: 'thumb', zoom: true, fullUrl: p.localUrl || p.url || p.thumbUrl })}
+        ${thumbs}
         <div class="grow" style="min-width:0;padding-right:26px;">
           <div class="flex gap-2" style="align-items:baseline;">
             <input class="input" data-field="name" value="${esc(r.name)}"
@@ -549,6 +697,7 @@ function resultCard(p) {
               .slice(0, 6) // AI 常给 7~8 个标签，全铺出来能占三行，反而把「放进去」按钮挤出屏幕。留 6 个够用。
               .map((t) => `<span class="chip chip-grey xs">${esc(t)}</span>`)
               .join('')}
+            ${multi ? `<span class="chip xs">同款 ${g.photos.length} 张已合并</span>` : ''}
             ${r.needConfirm ? '<span class="chip chip-warn xs">AI 也不太确定</span>' : ''}
             ${
               r.confidence !== undefined && r.confidence !== null
@@ -561,20 +710,56 @@ function resultCard(p) {
     </div>`;
 }
 
+/** 认不出来的那张：单独一张卡，给「重新识别 / 手动填写」两条出路 */
+function errorCard(p) {
+  return `
+    <div class="card-pad" style="border-bottom:1px solid var(--c-border);position:relative;">
+      ${dropButton(p.id)}
+      <div class="flex gap-3">
+        ${thumbHtml(p.thumbUrl, { alt: '照片', cls: 'thumb', zoom: true, fullUrl: p.localUrl || p.url || p.thumbUrl })}
+        <div class="grow">
+          <div class="chip chip-danger xs">暂时认不出来</div>
+          <div class="xs muted mt-1">${esc(p.error || '这张图 AI 没看懂')}</div>
+          <div class="flex gap-2 mt-3">
+            <button class="chip chip-grey" data-retry="${p.id}">重新识别</button>
+            <button class="chip chip-grey" data-manual="${p.id}">手动填写</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function bindResultEvents() {
   const list = document.getElementById('result-list');
 
-  // 输入即同步到 state —— AI 的结果只是建议，用户改什么就是什么
+  // 输入即同步到 state —— AI 的结果只是建议，用户改什么就是什么。
+  // 归组之后：改的是整组（组内每张照片的结果一起改），
+  // 否则会出现「3 张叫 A、5 张叫 B」—— 那正是归组要消灭的情况。
   list.querySelectorAll('[data-row]').forEach((row) => {
-    const p = state.photos.find((x) => String(x.id) === row.dataset.row);
-    if (!p?.result) return;
+    const key = row.dataset.row;
+    const isGroup = row.dataset.group === '1';
+
+    // 找到这一组对应的照片。
+    // 组的 key 是「归一化后的名字」，直接按同样的规则重新算一遍 key 来匹配，
+    // 不用反查分组结构 —— 逻辑跟 groupResults 保持一致，改一处两处都对。
+    const members = state.photos.filter((p) => {
+      if (p.status !== 'recognized' || !p.result) return false;
+      if (isGroup) return groupKeyOf(p) === key;
+      return String(p.id) === key;
+    });
+
+    if (!members.length) return;
+
     row.querySelectorAll('[data-field]').forEach((input) => {
       input.addEventListener('input', () => {
         const f = input.dataset.field;
-        if (f === 'quantity') p.result.quantity = Number(input.value) || 1;
-        else p.result[f] = input.value;
-        // 用户动过手就别再标「待确认」
-        if (f === 'name' || f === 'category') p.result.needConfirm = false;
+        const value = f === 'quantity' ? Number(input.value) || 1 : input.value;
+        for (const p of members) {
+          if (!p.result) continue;
+          p.result[f] = value;
+          // 用户动过手就别再标「待确认」
+          if (f === 'name' || f === 'category') p.result.needConfirm = false;
+        }
       });
     });
   });
@@ -603,11 +788,14 @@ function bindResultEvents() {
   list.querySelectorAll('[data-manual]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const p = state.photos.find((x) => String(x.id) === btn.dataset.manual);
+      if (!p) return;
       p.status = 'recognized';
       p.result = { name: '', category: '待确认', tags: [], quantity: 1, unit: null, needConfirm: false };
       renderResults();
-      // 聚焦到名称输入框，省一次点击
-      const row = document.querySelector(`[data-row="${btn.dataset.manual}"]`);
+      // 聚焦到名称输入框，省一次点击。
+      // 手动填的名字是空的，会被分到自己一组（key = __solo_<id>），
+      // 所以按这个 key 找卡片，而不是按照片 id 找。
+      const row = document.querySelector(`[data-row="__solo_${p.id}"]`);
       row?.querySelector('[data-field="name"]')?.focus();
     });
   });
@@ -620,6 +808,15 @@ function bindResultEvents() {
       e.preventDefault();
       e.stopPropagation();
       dropPhoto(Number(btn.dataset.drop));
+    });
+  });
+
+  // 「不要这组」—— 归组后的卡片上，✕ 一次踢掉整组（同款的那些照片全不要）
+  list.querySelectorAll('[data-drop-group]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropGroup(btn.dataset.dropGroup);
     });
   });
 }
@@ -647,6 +844,34 @@ function dropPhoto(id) {
 }
 
 /**
+ * 把一整组（同款）从本次入库队列里移除。
+ * 归组之后一张卡片可能代表 8 张照片，✕ 应该一次全踢掉，
+ * 而不是让用户点 8 次。
+ */
+function dropGroup(key) {
+  const targets = state.photos.filter((p) => groupKeyOf(p) === key);
+  if (!targets.length) return;
+
+  for (const p of targets) {
+    if (p.localUrl) URL.revokeObjectURL(p.localUrl);
+    if (p.thumbUrl && p.thumbUrl !== p.localUrl) URL.revokeObjectURL(p.thumbUrl);
+  }
+  state.photos = state.photos.filter((p) => groupKeyOf(p) !== key);
+
+  const count = state.photos.length;
+  document.getElementById('photo-count').textContent = String(count);
+  renderPhotos();
+
+  if (!count) {
+    document.getElementById('result-section').classList.add('hidden');
+    toggleSubmitBar(false);
+    document.getElementById('empty-card').classList.remove('hidden');
+    return;
+  }
+  renderResults();
+}
+
+/**
  * 选盒子区与吸底提交条一起显隐。
  * 分开两处控制容易漏（之前就只关了 section 忘了 bar），所以收在一个函数里。
  */
@@ -661,13 +886,20 @@ function updateSubmitState() {
   const hasItems = state.photos.some((p) => p.status === 'recognized' && p.result);
   toggleSubmitBar(hasItems);
   const btn = document.getElementById('btn-submit');
+  const btnAll = document.getElementById('btn-submit-all');
   // 不选盒子也能提交 —— 认出来的东西先记下来是第一位，
   // 有些只是「家里有这个」，暂时归不到哪个盒子，硬拦着反而没人愿意记。
   // 正在提交时不要把按钮重新放开
   if (btn && !state.busy) btn.disabled = !hasItems;
+  if (btnAll && !state.busy) btnAll.disabled = !hasItems;
   // 按钮文案跟着变，让人一眼看出这批东西会去哪
   if (btn && !state.busy) {
     btn.textContent = state.containerId ? '全部放进去' : '记下来，不放盒子';
+  }
+  if (btnAll && !state.busy) {
+    btnAll.textContent = state.containerId
+      ? '按 AI 认出的结果全部存进这个盒子'
+      : '按 AI 认出的结果全部记下来';
   }
 }
 
@@ -683,7 +915,7 @@ async function pickBox() {
   }
 
   const picked = await pickSheet(
-    '放进哪个盒子',
+    '换成哪个盒子',
     containers.map((c) => ({ value: c.id, label: c.name, desc: c.full_path, icon: c.code })),
     { emptyText: '还没有盒子，先去建一个' }
   );
@@ -698,40 +930,70 @@ async function pickBox() {
   const c = containers.find((x) => String(x.id) === String(picked));
   state.containerId = Number(picked);
   state.containerName = c?.name || '';
-  document.getElementById('chosen-box').innerHTML =
-    `${esc(c?.name || '')} <span class="xs muted">${esc(c?.full_path || '')}</span>`;
+  state.containerPath = c?.full_path || '';
+  rememberContainer({ id: state.containerId, name: state.containerName, full_path: state.containerPath });
+  renderChosenBox();
   updateSubmitState();
 }
 
-async function submitAll() {
+/**
+ * 组装要提交的数据。
+ *
+ * 按「同款组」提交：组内所有照片的 imageIds 都挂到同一条物品上，
+ * 数量取组内累加值。这样 8 张线 → 1 条物品 + 数量 8 + 8 张照片，
+ * 而不是 8 条物品各 1 根。
+ */
+function buildSubmitItems() {
+  const okPhotos = state.photos.filter((p) => p.status === 'recognized' && p.result);
+  const groups = groupResults(okPhotos);
+
+  return groups
+    .map((g) => {
+      // 用组内第一张的结果作为基准（用户在卡片上改的值已经同步到所有成员上了）
+      const base = g.photos[0]?.result || {};
+      const name = String(base.name || g.name || '').trim();
+      return {
+        imageIds: g.photos.map((p) => p.id).filter(Boolean),
+        name,
+        category: base.category ?? g.category,
+        tags: base.tags?.length ? base.tags : g.tags,
+        quantity: Number(base.quantity ?? g.quantity) || 1,
+        unit: base.unit ?? g.unit,
+        description: base.description,
+        brand: base.brand,
+        model: base.model,
+        color: base.color,
+        confidence: base.confidence ?? g.confidence,
+        needConfirm: base.needConfirm ?? g.needConfirm,
+      };
+    })
+    .filter((x) => x.name);
+}
+
+/**
+ * 提交入库。
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.useAiNames] true = 一键按 AI 认出的原样全存，不看用户改了什么。
+ *   用途：用户点「按 AI 认出的结果全部存下」时 —— 绝大多数情况下这就是他想要的，
+ *   个别认错了之后再进去改也来得及（存错了能改、能删）。
+ *   false = 用用户在卡片上改过的内容。
+ */
+async function submitAll({ useAiNames = false } = {}) {
   // 防连点要放在最前面：等算完再禁用，手快的人已经点了第二下
   const btn = document.getElementById('btn-submit');
-  if (btn.disabled) return;
+  const btnAll = document.getElementById('btn-submit-all');
+  if (btn.disabled && !useAiNames) return;
 
-  const items = state.photos
-    .filter((p) => p.status === 'recognized' && p.result)
-    .map((p) => ({
-      imageIds: [p.id],
-      name: (p.result.name || '').trim(),
-      category: p.result.category,
-      tags: p.result.tags || [],
-      quantity: Number(p.result.quantity) || 1,
-      unit: p.result.unit,
-      description: p.result.description,
-      brand: p.result.brand,
-      model: p.result.model,
-      color: p.result.color,
-      confidence: p.result.confidence,
-      needConfirm: p.result.needConfirm,
-    }))
-    .filter((x) => x.name);
-
+  const items = buildSubmitItems();
   if (!items.length) return toast('还有东西没填名称', true);
 
   // 不选盒子也能提交：containerId 传 null，服务端会记成「暂未放入盒子」
   const boxId = state.containerId || null;
 
   btn.disabled = true;
+  if (btnAll) btnAll.disabled = true;
+  const originalText = btn.textContent;
   btn.textContent = boxId ? '正在放进去…' : '正在记下来…';
 
   try {
@@ -756,6 +1018,7 @@ async function submitAll() {
   } catch (err) {
     toast(err.message, true);
     btn.disabled = false;
-    btn.textContent = '全部放进去';
+    if (btnAll) btnAll.disabled = false;
+    btn.textContent = originalText;
   }
 }

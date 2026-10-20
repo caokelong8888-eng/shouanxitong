@@ -2,7 +2,7 @@ import { api } from '../services/api.js';
 import { esc, thumbHtml, pathHtml, fmtQty, toast, statusChipClass, STATUS_LABEL, bindZoom } from '../components/ui.js';
 import { navigate } from '../router.js';
 import { renderBottomNav } from '../components/bottom-nav.js';
-import { openCamera } from '../services/camera.js';
+import { startPhotoFlow } from '../services/photo-flow.js';
 
 /**
  * 搜索页 —— 全 App 最核心的功能。
@@ -17,6 +17,17 @@ import { openCamera } from '../services/camera.js';
  */
 
 const HOT = ['电池', '数据线', 'HDMI', '充电头', '工具', '说明书'];
+
+/**
+ * 位置筛选状态。
+ *
+ * 模块级而不是页面内局部 —— doSearch 是模块级函数，它要用这个状态。
+ * 用户选了「客厅」之后结果要一直带着这个限定，所以状态得比页面活得久。
+ */
+const placeFilter = {
+  spaceIds: [],
+  locationIds: [],
+};
 
 /* ---------------- 最近找过的 ---------------- */
 
@@ -57,6 +68,10 @@ function clearRecentSearches() {
 export async function searchPage({ app, query }) {
   const initialQ = query?.q || '';
 
+  // 每次进搜索页重置位置筛选 —— 上次的条件不该莫名其妙套在新搜索上
+  placeFilter.spaceIds = [];
+  placeFilter.locationIds = [];
+
   app.innerHTML = `
     <div class="page">
       <div style="padding: var(--s-4) var(--s-4) 0; padding-top: calc(var(--safe-top) + var(--s-4));">
@@ -65,6 +80,9 @@ export async function searchPage({ app, query }) {
           <input type="search" id="q" placeholder="搜索你要找的东西" value="${esc(initialQ)}" autocomplete="off" enterkeyhint="search" />
           <button type="button" class="search-clear hidden" id="clear">✕</button>
         </form>
+
+        <!-- 位置筛选条：点一下「客厅」就只看客厅的东西 -->
+        <div class="chip-row mt-3 hidden" id="place-row"></div>
 
         <div class="chip-row mt-3" id="mode-row">
           <button class="chip" data-mode="keyword">关键词</button>
@@ -115,6 +133,97 @@ export async function searchPage({ app, query }) {
     });
   }
 
+  /* ---------------- 位置筛选条 ---------------- */
+
+  /**
+   * 加载家里的空间与区域，铺成一排可点的 chip。
+   *
+   * 【为什么要有】
+   * 用户想找「书房里面的电池」，以前只能自己把「书房」两个字打进搜索词，
+   * 还得指望后端认得出来。点一下 chip 就能限定位置，不用猜词。
+   */
+  async function loadPlaceChips() {
+    const row = document.getElementById('place-row');
+    if (!row) return;
+    let spaces = [];
+    let locations = [];
+    try {
+      const [s, l] = await Promise.all([api.listSpaces(), api.listLocations()]);
+      spaces = s.data || [];
+      locations = l.data || [];
+    } catch {
+      return; // 拿不到就不显示这排，不影响搜索本身
+    }
+    if (!spaces.length && !locations.length) return;
+
+    renderPlaceChips(spaces, locations);
+  }
+
+  /**
+   * 画位置筛选条。
+   *
+   * 【为什么必须整体重画，而不是只 toggle 选中样式】
+   * 「清除」按钮的存在与否取决于当前有没有选中位置。
+   * 之前点 chip 只做 class 切换，从不重画这一行，
+   * 结果「清除」按钮永远出不来 —— 用户选了位置就再也退不出去，
+   * 只能刷新页面重置。
+   * 所以这里做成「数据一变就整行重画」，选中态也跟着数据走。
+   */
+  function renderPlaceChips(spaces, locations) {
+    const row = document.getElementById('place-row');
+    if (!row) return;
+
+    const hasFilter = placeFilter.spaceIds.length > 0 || placeFilter.locationIds.length > 0;
+
+    row.innerHTML = `
+      <span class="xs muted" style="align-self:center;margin-right:2px;">位置</span>
+      ${spaces
+        .map((sp) => {
+          const on = placeFilter.spaceIds.includes(sp.id);
+          return `<button class="chip ${on ? '' : 'chip-grey'}" data-place="space" data-id="${sp.id}">${esc(sp.name)}</button>`;
+        })
+        .join('')}
+      ${locations
+        .map((lo) => {
+          const on = placeFilter.locationIds.includes(lo.id);
+          return `<button class="chip ${on ? '' : 'chip-grey'}" data-place="location" data-id="${lo.id}">${esc(lo.name)}</button>`;
+        })
+        .join('')}
+      ${hasFilter ? '<button class="chip chip-danger" data-place-clear="1">清除</button>' : ''}
+    `;
+    row.classList.remove('hidden');
+
+    row.querySelectorAll('[data-place]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const type = b.dataset.place;
+        const id = Number(b.dataset.id);
+        const arr = type === 'space' ? placeFilter.spaceIds : placeFilter.locationIds;
+        const idx = arr.indexOf(id);
+        if (idx === -1) arr.push(id);
+        else arr.splice(idx, 1);
+        // 整行重画：选中态 + 「清除」按钮一起更新
+        renderPlaceChips(spaces, locations);
+        // 位置变了，重新搜一遍
+        rerunSearch();
+      });
+    });
+
+    row.querySelector('[data-place-clear]')?.addEventListener('click', () => {
+      placeFilter.spaceIds = [];
+      placeFilter.locationIds = [];
+      renderPlaceChips(spaces, locations);
+      rerunSearch();
+    });
+  }
+
+  /** 位置筛选变化后重新搜 —— 有词就按词搜，没词就列出该位置下的所有东西 */
+  function rerunSearch() {
+    const q = input.value.trim();
+    if (q) doSearch(q, 'keyword');
+    else if (placeFilter.spaceIds.length || placeFilter.locationIds.length) doSearch('', 'keyword');
+    else showHot();
+  }
+
   document.querySelectorAll('#mode-row [data-mode]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const mode = btn.dataset.mode;
@@ -127,6 +236,9 @@ export async function searchPage({ app, query }) {
       else showHot();
     });
   });
+
+  // 位置筛选条：加载家里的空间与区域，铺成一排可点的 chip
+  loadPlaceChips();
 
   // 带 ?q= 进来：可能是别人分享的搜索链接
   const mode = query?.mode;
@@ -363,7 +475,15 @@ async function doSearch(q, mode = 'keyword', all = false, categoryId = null) {
       renderResults(body, { items: data, query: '', type: 'keyword' });
       return;
     }
-    const { data } = await api.search({ q, type: mode, limit: 50, categoryId });
+    const { data } = await api.search({
+      q,
+      type: mode,
+      limit: 50,
+      categoryId,
+      // 位置筛选条选中的位置一起传过去
+      spaceIds: placeFilter.spaceIds.join(','),
+      locationIds: placeFilter.locationIds.join(','),
+    });
     renderResults(body, data);
   } catch (err) {
     body.innerHTML = `
@@ -384,24 +504,25 @@ function renderResults(body, data) {
   const items = data.items || [];
 
   if (!items.length) {
+    const filtered = placeFilter.spaceIds.length || placeFilter.locationIds.length;
     body.innerHTML = `
       <div class="card">
         <div class="empty">
           <div class="emoji">🔍</div>
-          <div class="title">没找到「${esc(data.query || '')}」</div>
-          <div class="desc">换个说法试试，或者先拍照存进系统</div>
+          <div class="title">${filtered ? '这个位置里没找到' : `没找到「${esc(data.query || '')}」`}</div>
+          <div class="desc">${
+            filtered
+              ? '换个位置看看，或者把位置筛选清掉再搜'
+              : '换个说法试试，或者先拍照存进系统'
+          }</div>
         </div>
         <div style="padding:0 var(--s-4) var(--s-4);">
           <button class="btn btn-primary btn-block" id="btn-snap-empty">📷 拍一张存起来</button>
         </div>
       </div>`;
-    // 就地唤起相机，拍完去入库页 —— 不跳中间页
+    // 就地走统一拍照流程（先定位置再拍）—— 不跳中间页
     document.getElementById('btn-snap-empty')?.addEventListener('click', () => {
-      openCamera({
-        onDone: (files) => {
-          if (files.length) navigate('/inbound');
-        },
-      });
+      startPhotoFlow();
     });
     return;
   }
@@ -418,6 +539,14 @@ function renderResults(body, data) {
         ? `<div class="chip-row" style="margin-bottom:var(--s-3);">
              <span class="xs muted" style="align-self:center;margin-right:2px;">只找</span>
              ${data.place_filter.map((p) => `<span class="chip xs">📍 ${esc(p)}</span>`).join('')}
+           </div>`
+        : ''
+    }
+    ${
+      // 用户自己在筛选条上点的位置 —— 也得说清楚「结果是限定过的」
+      placeFilter.spaceIds.length || placeFilter.locationIds.length
+        ? `<div class="xs muted" style="margin-bottom:var(--s-3);">
+             结果已限定在所选位置内
            </div>`
         : ''
     }
@@ -489,18 +618,37 @@ function resultRow(item) {
   const inBoxPlaces = places.filter((p) => p.in_box);
   const loosePlaces = places.filter((p) => !p.in_box);
 
+  // 【位置筛选时只显示命中的位置】
+  // 一件东西可以同时在好几个地方（AA电池：客厅盒子08节 + 储藏室盒子08节）。
+  // 用户选了「储藏室」筛选，如果下面还并列显示「客厅/电视柜/盒子02」，
+  // 他会怀疑是不是筛错了。命中位置排前面，其余的折叠成一行「另外还有 N 处」。
+  const filtering = placeFilter.spaceIds.length > 0 || placeFilter.locationIds.length > 0;
+  const spaceIds = new Set(placeFilter.spaceIds.map(Number));
+  const locationIds = new Set(placeFilter.locationIds.map(Number));
+  const isHit = (p) =>
+    spaceIds.has(Number(p.space_id)) || locationIds.has(Number(p.location_id));
+
+  const hitPlaces = filtering ? inBoxPlaces.filter(isHit) : inBoxPlaces;
+  const otherPlaces = filtering ? inBoxPlaces.filter((p) => !isHit(p)) : [];
+
   let locationHtml = '';
-  if (inBoxPlaces.length) {
-    locationHtml = inBoxPlaces
+  if (hitPlaces.length) {
+    locationHtml = hitPlaces
       .map(
         (p) => `
       <div class="flex gap-2" style="align-items:center;">
         ${pathHtml(p.full_path)}
-        ${inBoxPlaces.length > 1 || p.quantity > 1 ? `<span class="chip chip-grey xs">${esc(fmtQty(p.quantity, item.unit))}</span>` : ''}
+        ${hitPlaces.length > 1 || p.quantity > 1 ? `<span class="chip chip-grey xs">${esc(fmtQty(p.quantity, item.unit))}</span>` : ''}
       </div>`
       )
       .join('');
   }
+
+  // 没命中任何位置却还是被搜出来了 —— 说明它同时在别处有存量，
+  // 这里只提示数量，不展开路径（路径属于别的位置，与本次筛选无关）
+  const otherHtml = otherPlaces.length
+    ? `<div class="xs muted mt-1">另外还有 ${otherPlaces.length} 处存放</div>`
+    : '';
 
   const looseHtml = loosePlaces.length
     ? loosePlaces
@@ -524,7 +672,7 @@ function resultRow(item) {
           ${item.category_name ? `<span class="xs muted">${esc(item.category_name)}</span>` : ''}
           ${item.need_confirm ? '<span class="chip chip-warn xs">待确认</span>' : ''}
         </div>
-        <div class="mt-1">${locationHtml}${looseHtml}${noPlace}</div>
+        <div class="mt-1">${locationHtml}${otherHtml}${looseHtml}${noPlace}</div>
       </div>
       <span class="muted">›</span>
     </button>`;
